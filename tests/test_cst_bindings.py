@@ -77,6 +77,6 @@ def test_query_checks_written_file(monkeypatch):
 
 def test_tree_empty_fails_closed():
     p = FakeProject()
-    p.model3d.get_tree_items = lambda: []
+    p.model3d.get_tree_items = list
     with pytest.raises(RuntimeError, match="Solid"):
         read_inventory(p, binding())
