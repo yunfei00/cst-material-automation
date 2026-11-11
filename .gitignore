@@ -218,3 +218,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Company CAD/CST data: NEVER commit or upload
+*.cst
+*.asm
+*.asm.[0-9]*
+*.prt
+*.prt.[0-9]*
+*.sat
+*.mtd
+*.pvz
+*.pvs
+*.step
+*.stp
+*.iges
+*.igs
+*.stl
+*.brd
+*.db
+*.sqlite
+*.sqlite3
+local-data/
+private-data/
+runtime/
+reports/private/
