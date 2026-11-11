@@ -89,3 +89,38 @@ P0-C：在明确指定的测试工程副本上赋值、另存、关闭回读，�
 - 记录范围：P0-A 本地探测及通用 Python 测试；尚未收到逐项模块布尔值或原始脱敏输出
 - 真实 CST API 连接、Solid/材料枚举、赋值、另存和回读：**NOT_RUN**，不得推断通过
 - 下一步：P0-B 只读真实接口验证，需先确认 CST 2025 SP1 本机可用的官方自动化接口及方法
+
+## 8. P0-B 接口发现（根据 2026-11-11 反馈新增）
+
+已确认：**CST 2025 SP1**；P0-A 基础测试通过，但 `modules.cst`、`modules.cst.interface`、`modules.win32com`、`modules.win32com.client` **四项全部为 false**。这只代表当前 Python 环境无法发现模块，不代表 CST 没有自动化接口。
+
+### 操作方法
+
+1. 在 Windows 中找到 CST 2025 SP1 的实际安装目录（可从 CST 快捷方式“打开文件所在的位置”查找）。
+2. 打开 PowerShell，进入已经克隆的 `cst-material-automation` 仓库。
+3. 整段执行以下命令；提示时输入 **CST 安装根目录**，不要输入工程文件路径：
+
+```powershell
+$ErrorActionPreference = 'Stop'
+git fetch origin
+if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
+git switch feat/cst-p0-probe
+if ($LASTEXITCODE -ne 0) { throw '切换分支失败，保留本地改动并反馈' }
+git pull --ff-only origin feat/cst-p0-probe
+if ($LASTEXITCODE -ne 0) { throw '更新分支失败，保留本地改动并反馈' }
+$cstDir = Read-Host '请输入 CST 2025 SP1 安装根目录（不会上传路径）'
+uv run python -m cst_material.discovery --cst-dir "$cstDir"
+if ($LASTEXITCODE -ne 0) { throw '接口发现失败' }
+uv run ruff check .
+if ($LASTEXITCODE -ne 0) { throw '代码检查失败' }
+uv run pytest -m 'not cst_real'
+if ($LASTEXITCODE -ne 0) { throw '单元测试失败' }
+```
+
+### 反馈
+
+仅反馈输出 JSON 中的 `status`、`features`、`scan_limited` 和单元测试结果；不需要提供安装目录或任何工程文件。
+
+本工具只遍历所指定目录的有限层级（最多 5 层、20000 项），记录特定目录名与扩展名，不读取文件内容，不启动 CST，不加载 DLL，不修改注册表。发现结果为线索，不能替代真实 CST API 验证。
+
+如公司策略不允许扫描安装目录，请停止并反馈，不要绕过权限。
