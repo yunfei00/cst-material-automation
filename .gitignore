@@ -242,3 +242,7 @@ local-data/
 private-data/
 runtime/
 reports/private/
+
+# Generated local CST inventory and assignment reports (sensitive)
+P1_Report.json
+P2_Report.json
