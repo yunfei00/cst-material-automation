@@ -55,10 +55,9 @@ def _run_inventory(source: Path, output: dict) -> None:
                     )
                     for row in output["solids"]:
                         row["material"] = assigned.get(row["identifier"])
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
                     output["warnings"] = [
-                        "三维实体当前材料查询失败；结构及材料清单已读取。"
-                        f"请核对 CST 2025 的 Solid VBA 方法：{exc}"
+                        f"三维实体材料查询失败（结构和材料清单已读取）：{exc}"
                     ]
             finally:
                 project.close()
@@ -128,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
             _run_inventory(Path(args.source), output)
         else:
             _run_assign(args, output)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
         output["error"] = f"{type(exc).__name__}: {exc}"
         print(f"失败：{output['error']}", file=sys.stderr)
     _report(Path(args.report), output)
