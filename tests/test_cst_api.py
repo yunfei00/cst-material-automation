@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -94,3 +95,39 @@ def test_reject_source_destination_identity(tmp_path: Path):
         assign_and_verify(
             FakeEnvironment(), src, src, {"component:solid": "Copper"}, bindings()
         )
+
+
+def test_refuse_target_missing_from_true_vba_catalog(tmp_path: Path):
+    src = tmp_path / "source.cst"
+    src.write_bytes(b"original")
+    bindings_with_guard = replace(
+        bindings(), enumerate_shapes=lambda project: {"other:solid": "Vacuum"}
+    )
+    with pytest.raises(ValueError, match="official CST VBA catalog"):
+        assign_and_verify(
+            FakeEnvironment(),
+            src,
+            tmp_path / "result.cst",
+            {"component:solid": "Copper"},
+            bindings_with_guard,
+        )
+    assert src.read_bytes() == b"original"
+
+
+def test_refuse_material_missing_from_true_vba_catalog(tmp_path: Path):
+    src = tmp_path / "source.cst"
+    src.write_bytes(b"original")
+    bindings_with_guard = replace(
+        bindings(),
+        enumerate_shapes=lambda project: {"component:solid": "Vacuum"},
+        material_exists=lambda project, name: name == "Vacuum",
+    )
+    with pytest.raises(ValueError, match="Material.Exists"):
+        assign_and_verify(
+            FakeEnvironment(),
+            src,
+            tmp_path / "result.cst",
+            {"component:solid": "Copper"},
+            bindings_with_guard,
+        )
+    assert src.read_bytes() == b"original"
