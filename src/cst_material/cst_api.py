@@ -6,9 +6,10 @@ the installed CST 2025 SP1 documentation. No guessed CST methods are invoked.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 from cst_material.domain import Material, Solid
 
