@@ -31,7 +31,7 @@
 - `project.model3d.add_to_history(header, vba_code)`
 - `project.save(path, allow_overwrite=True)`、`project.close()`
 
-Python 文档未提供三维 Solid 赋材的专用 Python 方法；当前实现使用 VBA `Solid.ChangeMaterial` / `Solid.GetMaterialNameForShape`，其 CST 2025 SP1 兼容性尚待真实 Windows 运行确认。
+CST 2025 完整 Online Help 已确认三维 VBA 官方接口：`Solid.GetNumberOfShapes`、`Solid.GetNameOfShapeFromIndex`、`Solid.GetMaterialNameForShape`、`Solid.ChangeMaterial`、`Material.Exists`。P1 在临时工程副本中用官方 VBA 结果交叉验证 Python 工程树；P2 在副本上赋值并回读。接口签名已有文档依据，但完整真实工程行为仍需 Windows CST 2025 SP1 实机验收。
 
 **状态：接口适配代码与 CLI 已提交，尚未完成 CST 2025 SP1 真实工程验收。GitHub CI 仅证明无 CST 的模拟测试通过，不能代替真实验收。**
 
