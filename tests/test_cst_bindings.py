@@ -7,6 +7,7 @@ from cst_material.cst_bindings import (
     _vba_string,
     assign_material,
     binding,
+    material_exists,
     read_assigned_materials,
     read_shape_catalog,
 )
@@ -120,3 +121,35 @@ def test_vba_shape_catalog_rejects_partial_file(monkeypatch):
     monkeypatch.setattr(p.model3d, "add_to_history", write_catalog)
     with pytest.raises(RuntimeError, match="不完整"):
         read_shape_catalog(p)
+
+
+def test_material_exists_via_official_vba(monkeypatch):
+    p = FakeProject()
+
+    def write_result(header, script):
+        path_line = next(line for line in script.splitlines() if line.startswith("Open "))
+        import re
+
+        match = re.match(r'Open "(.+)" For Output As #fh', path_line)
+        assert match
+        assert 'Material.Exists("Copper")' in script
+        Path(match.group(1)).write_text("True\n", encoding="utf-8")
+
+    monkeypatch.setattr(p.model3d, "add_to_history", write_result)
+    assert material_exists(p, "Copper")
+
+
+def test_material_exists_rejects_invalid_query_result(monkeypatch):
+    p = FakeProject()
+
+    def write_invalid(header, script):
+        path_line = next(line for line in script.splitlines() if line.startswith("Open "))
+        import re
+
+        match = re.match(r'Open "(.+)" For Output As #fh', path_line)
+        assert match
+        Path(match.group(1)).write_text("UNKNOWN\n", encoding="utf-8")
+
+    monkeypatch.setattr(p.model3d, "add_to_history", write_invalid)
+    with pytest.raises(RuntimeError, match="异常"):
+        material_exists(p, "Copper")
