@@ -10,7 +10,7 @@
 
 - **P1 — `inventory`**：通过 CST Python `model3d.get_tree_items()` 读取结构树和材料名称，通过 VBA 查询 Solid 当前材料，输出本地中文 JSON 报告。原始 CST 工程保持不变。
 - **P2 — `assign`**：根据工程师指定的 Solid→已有材料映射，打开工程副本，通过 VBA 修改材料，保存并重新打开核对。
-- **现状**：代码与命令行已接入；无 CST 的 CI 单元测试覆盖流程；上传的 Python 官方帮助没有包含三维材料 VBA 方法签名，需要在 CST 2025 SP1 本机确认。
+- **现状**：代码与命令行已接入；无 CST 的 CI 单元测试覆盖流程；完整 CST 2025 Online Help 已提供 VBA_3D Solid/Material/Component 官方接口签名，P1 增加官方 VBA Solid 枚举与工程树交叉验证；**真实 CST 2025 SP1 运行行为尚待实机确认**。
 - [P1/P2 运行与验证说明](p1-p2-verification.md) 提供完整命令和失败诊断。
 
 ## 后续阶段
