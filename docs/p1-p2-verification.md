@@ -29,19 +29,19 @@ $env:PYTHONPATH = (Join-Path (Get-Location) 'src')
 # 修改为本机已经存在、包含结构和材料的测试 CST 工程
 $source = 'D:\CST_Test\Existing.cst'
 
-# P1：仅读取，原工程不修改；结果在当前目录 P1_Report.json
-python -m cst_material.cli inventory --source $source --report 'P1_Report.json'
-Get-Content 'P1_Report.json' -Encoding UTF8
+# P1：仅读取，原工程不修改；结果在本地 local-data/P1_Report.json
+python -m cst_material.cli inventory --source $source --report 'local-data/P1_Report.json'
+Get-Content 'local-data/P1_Report.json' -Encoding UTF8
 
-# P2：先从 P1_Report.json 挑选一个准确的 Solid 和已有材料名称
+# P2：先从 P1 报告挑选一个准确的 Solid 和已有材料名称
 # 将下面三个变量替换为真实值（示例仅演示命令格式）
 $solid = 'component1:solid1'
 $material = 'Copper'
 $dest = 'D:\CST_Test\Output_Assigned.cst'
 
 # 此命令将创建新工程（目标文件必须不存在），并重新打开验证
-python -m cst_material.cli assign --source $source --dest $dest --solid $solid --material $material --report 'P2_Report.json'
-Get-Content 'P2_Report.json' -Encoding UTF8
+python -m cst_material.cli assign --source $source --dest $dest --solid $solid --material $material --report 'local-data/P2_Report.json'
+Get-Content 'local-data/P2_Report.json' -Encoding UTF8
 ```
 
 **注意：** 本工程的 `python -m` 会采用当前终端的 Python；若 `import cst` 是安装在另一个虚拟环境，请切换到已验证过的解释器即可。真实 CST 验证不需要使用 `uv run` 创建新的独立 Python 环境。
