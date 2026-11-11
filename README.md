@@ -1,67 +1,57 @@
 # CST Material Automation
 
-面向 **CST Studio Suite 2025** 的离线结构识别与材料自动化赋值工具（开发中）。
+面向 **CST Studio Suite 2025 SP1** 的离线结构识别与材料赋值工具（开发中）。
 
-> **当前状态：v0.2.0 P0-A 环境探测阶段。** 已有 Python 项目框架、几何基础模型、单元测试和只读接口探测；尚未完成真实 CST 连接、材料赋值、保存回读或桌面界面。不要将本仓库视为已可用于生产工程。
+## 目标
 
-## 目标与边界
+Creo 装配导入 CST 后可能产生大量未赋材料的 Solid。工具计划读取 Solid、Component 和已有材料，结合几何与空间关系提供**材料候选**，经工程师确认后批量赋值并另存为新的 CST 工程。
 
-已有 Creo ASM 装配导入 CST 后，工程中存在大量未赋材料的 Solid。项目目标是通过几何特征与空间关系给出材料候选，由工程师确认后批量赋值，并保存为新的 CST 工程。**形状不能唯一决定材料**，不自动猜测真实材料。
+**几何形状不能唯一确定材料，不能未经确认自动猜测材料。**
 
-- 运行环境：公司授权的 Windows + CST 2025，完全离线处理工程数据
-- Creo View 11.0：仅辅助人工查看，暂不依赖其 API 或导出功能
-- 输入：本地 CST 工程及现有材料定义；不要求 BOM/CSV/历史标注
-- 输出：材料候选、确认记录、经验证的新 CST 工程（后续阶段实现）
-- 严禁向个人 GitHub 上传公司 ASM、PRT、SAT、CST、材料、几何提取数据、截图和日志
+## 已确认的技术路线
 
-## 技术栈
+- 公司 Windows 已安装 CST 2025 SP1，用户确认可以通过 Python 调用。
+- CST 安装目录 Library 中提供可用 pip 安装的 Python Package；调用入口为 `import cst`。
+- 此前 `uv` 项目环境探测结果四项模块均为 false，只说明该虚拟环境当时未安装对应包；**不再重复做环境扫描**。
+- 真实 CST API 的具体方法与参数，下一步以用户已有的 Python 调用代码为准，不猜测接口。
 
-Python 3.11、uv、pytest、Ruff；后续逐步引入 PySide6、NumPy/SciPy、SQLite。CST Python/COM/VBA 真实接口以本机验证为准，不预设未证实的方法。
+## 当前代码有什么
 
-## 当前开发进度
+| 内容 | 作用 |
+| --- | --- |
+| `src/cst_material/domain.py` | Solid、Material、BoundingBox 等基础数据类型 |
+| `src/cst_material/geometry.py` | 包围盒尺寸、体积、中心点计算 |
+| `src/cst_material/` 中其他基础文件 | CST 适配器接口约定与包初始化 |
+| `tests/test_geometry.py` | 几何计算的自动单元测试 |
+| `pyproject.toml` | Python 项目依赖和测试配置 |
+| `.github/workflows/ci.yml` | Windows 上自动运行 Ruff 和非真实 CST 单元测试 |
 
-| 阶段 | 状态 | 交付 |
-| --- | --- | --- |
-| v0.1.0 项目基础 | 已合入 main | 领域模型、CST 适配器协议、几何纯函数、Windows CI |
-| v0.2.0 P0-A | 开发分支，待本机验证 | 只读 CST 环境探测、验收状态模型、测试与文档 |
-| v0.2.0 P0-B | 未开始 | 真实 CST 连接、枚举 Solid 和材料 |
-| v0.2.0 P0-C | 未开始 | 测试副本赋材料、另存、回读、原件 SHA256 校验 |
-| v0.3.0 及以后 | 规划中 | 几何关系、材料匹配、中文 UI、Windows 发布 |
+已删除无业务必要的 `probe.py`、`discovery.py`、`cli.py`、`verification.py` 及其对应测试。
 
-详细路线见 [研发路线图](docs/roadmap.md)，架构见 [架构设计](docs/architecture.md)。
+**当前尚未实现真实 CST 工程读取、材料赋值或保存回读。**
 
-## 需要你做的验证（统一入口）
-
-**所有需要工程师在公司电脑上执行的操作，都维护在文档里，不再依赖聊天中的零散命令。**
-
-**[打开《P0 Windows 验证手册》](docs/p0-windows-verification.md)**
-
-该文档包含：
-1. 首次克隆与已有仓库两种执行方式；
-2. 一整段可复制的 PowerShell 命令；
-3. 预期结果和常见问题；
-4. 可安全反馈的字段与后续开发依赖。
-
-目前只需执行 **P0-A 只读探测**。无需准备真实工程，也不会启动或修改 CST。
-
-## 开发者快速检查
+## 开发者测试
 
 ```powershell
 uv sync --group dev
 uv run ruff check .
 uv run pytest -m "not cst_real"
-uv run python -m cst_material.cli probe
 ```
 
-GitHub Actions 只检查通用 Python 代码，不代表真实 CST 功能通过。
+这些命令是开发者和 CI 用于检查 Python 代码的，**不要求工程师反复执行**，也不证明 CST 真实功能已通过。
 
-## 安全
+## 后续开发
 
-阅读 [安全边界](docs/security.md)。即使仓库为 Private，也不得上传公司专有工程资料。真实 CST 测试只在授权 Windows 本地进行。
+1. 根据已验证的 `import cst` 代码实现最小 CST 适配器。
+2. 读取测试工程中的 Solid、Component 和 Material。
+3. 只在工程副本上赋值，另存并重新打开核对。
+4. 再逐步实现几何分析、材料候选、人工确认和中文 UI。
 
-## 协作约定
+见 [研发路线图](docs/roadmap.md)、[架构设计](docs/architecture.md)、[真实 CST 验证说明](docs/p0-windows-verification.md)。
 
-- 开发代码、文档和 CI 由开发侧维护；本地 CST 验证由工程师执行
-- 每次需要人工验证时，先更新 `docs/p0-windows-verification.md`，再在 PR 中给出文档链接
-- 未经过真实环境验证的功能必须标记为 `NOT_RUN` 或 `BLOCKED`，不得宣称 PASS
-- 功能通过 CI 并达到相应阶段验收后，再合入 `main`
+## 安全与协作
+
+- 公司 ASM、PRT、SAT、CST、材料库、几何数据、截图、原始日志与内部路径不得提交到个人 GitHub。
+- 开发者维护代码、测试和 CI；工程师只需要验证确实依赖本机 CST 的业务功能。
+- 新增文件应有明确业务目的，不再为了环境探测增加层层框架。
+- **本分支仍是开发分支，未经授权不合并 main。**
