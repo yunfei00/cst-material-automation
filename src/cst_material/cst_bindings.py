@@ -154,10 +154,14 @@ def read_shape_catalog(project) -> dict[str, str]:
             f"Open {_vba_string(str(result_file))} For Output As #fh",
             "shapeCount = Solid.GetNumberOfShapes",
             "Print #fh, CStr(shapeCount)",
-            "For i = 0 To shapeCount - 1",
+            # The official page does not specify whether the index is 0- or
+            # 1-based; include both boundaries and ignore missing indexes.
+            "For i = 0 To shapeCount",
             "shapeName = Solid.GetNameOfShapeFromIndex(i)",
+            "If Len(shapeName) > 0 Then",
             "Print #fh, shapeName",
             "Print #fh, Solid.GetMaterialNameForShape(shapeName)",
+            "End If",
             "Next i",
             "Close #fh",
         ]
