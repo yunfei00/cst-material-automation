@@ -108,14 +108,14 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     p1 = commands.add_parser("inventory", help="P1：读取已有工程的结构、材料及对应关系")
     p1.add_argument("--source", required=True, help="已有 CST 工程的绝对路径")
-    p1.add_argument("--report", default="P1_Report.json", help="本地 JSON 报告路径")
+    p1.add_argument("--report", default="local-data/P1_Report.json", help="本地 JSON 报告路径")
     p2 = commands.add_parser("assign", help="P2：在工程副本中修改 Solid 材料并回读")
     p2.add_argument("--source", required=True)
     p2.add_argument("--dest", required=True, help="新输出路径，不能已存在")
     p2.add_argument("--solid", help="来自 P1 的 Solid.identifier")
     p2.add_argument("--material", help="来自 P1 的材料名称")
     p2.add_argument("--mapping", help="JSON 文件，键为 Solid.identifier，值为已有材料名称")
-    p2.add_argument("--report", default="P2_Report.json")
+    p2.add_argument("--report", default="local-data/P2_Report.json")
     args = parser.parse_args(argv)
     output: dict = {
         "task": args.command,
