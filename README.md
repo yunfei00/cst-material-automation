@@ -69,3 +69,5 @@ uv run pytest -m "not cst_real"
 - 若工程依赖同名辅助目录或外部引用，必须在本机一并安全复制；当前代码仅复制单个 `.cst` 文件，不宣称覆盖所有 CST 工程依赖形式。
 
 GitHub CI 只执行不依赖 CST 的单元测试。
+
+P1/P2 当前可运行的开发测试命令和真实验收限制见 [P1/P2 验证说明](docs/p1-p2-verification.md)。
