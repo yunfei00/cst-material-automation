@@ -2,7 +2,7 @@
 
 Python calls: cst.interface.Project.model3d.get_tree_items/add_to_history
 are documented in the supplied CST Python Libraries HTML help.
-Solid VBA methods must still be verified on a real CST 2025 SP1 instance.
+VBA Solid API method names and signatures are verified against the supplied\nCST 2025 Online Help / VBA_3D / Solid Object reference. The actual runtime\nbehavior still requires a real CST 2025 SP1 integration test.
 """
 from __future__ import annotations
 
@@ -128,6 +128,61 @@ def read_assigned_materials(project, solid_ids: tuple[str, ...]) -> dict[str, st
                 f"材料读取结果数量不一致：期待 {len(solid_ids)}，实际 {len(values)}"
             )
         return dict(zip(solid_ids, values, strict=True))
+    finally:
+        result_file.unlink(missing_ok=True)
+
+
+
+def read_shape_catalog(project) -> dict[str, str]:
+    """Enumerate actual CST shapes and their materials via documented VBA methods.
+
+    This read-only VBA query is executed through a temporary history entry,
+    so call it ONLY on disposable copies of CST projects. The history entry
+    must never be saved to the original project.
+    """
+    fd, tmp = tempfile.mkstemp(prefix="cst_shapes_", suffix=".txt")
+    os.close(fd)
+    result_file = Path(tmp)
+    try:
+        result_file.unlink()
+        code = [
+            "Dim fh As Integer",
+            "Dim i As Long",
+            "Dim shapeName As String",
+            "Dim shapeCount As Long",
+            "fh = FreeFile",
+            f"Open {_vba_string(str(result_file))} For Output As #fh",
+            "shapeCount = Solid.GetNumberOfShapes",
+            "Print #fh, CStr(shapeCount)",
+            "For i = 0 To shapeCount - 1",
+            "shapeName = Solid.GetNameOfShapeFromIndex(i)",
+            "Print #fh, shapeName",
+            "Print #fh, Solid.GetMaterialNameForShape(shapeName)",
+            "Next i",
+            "Close #fh",
+        ]
+        _modeler(project).add_to_history(
+            "CST Material Automation: Shape catalog (discard history)", "\n".join(code)
+        )
+        if not result_file.is_file():
+            raise RuntimeError("CST VBA 未生成实体清单文件")
+        encoding = "mbcs" if os.name == "nt" else "utf-8"
+        rows = result_file.read_text(encoding=encoding).splitlines()
+        if not rows:
+            raise RuntimeError("CST VBA 实体清单文件为空")
+        try:
+            count = int(rows[0].strip())
+        except ValueError as exc:
+            raise RuntimeError("CST VBA 实体数量不是整数") from exc
+        if count < 0 or len(rows) != 1 + 2 * count:
+            raise RuntimeError(
+                f"CST 实体清单不完整：声明 {count}，实际返回 {len(rows) - 1} 行"
+            )
+        names = rows[1::2]
+        materials = rows[2::2]
+        if not all(names) or len(set(names)) != len(names):
+            raise RuntimeError("CST VBA 返回空实体名称或重复名称")
+        return dict(zip(names, materials, strict=True))
     finally:
         result_file.unlink(missing_ok=True)
 
