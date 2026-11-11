@@ -47,7 +47,7 @@ def _modeler(project):
 def _items(project) -> list[str]:
     result = _modeler(project).get_tree_items()
     if not isinstance(result, (list, tuple)):
-        raise RuntimeError("CST get_tree_items 未返回列表，不能安全识别模型")
+        raise TypeError("CST get_tree_items 未返回列表，不能安全识别模型")
     return [str(item) for item in result]
 
 
