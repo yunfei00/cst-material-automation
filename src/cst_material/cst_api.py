@@ -39,6 +39,8 @@ class CSTBindings:
     read_assigned_materials: (
         Callable[[CSTProject, tuple[str, ...]], dict[str, str]] | None
     ) = None
+    enumerate_shapes: Callable[[CSTProject], dict[str, str]] | None = None
+    material_exists: Callable[[CSTProject, str], bool] | None = None
 
 
 def connect() -> CSTEnvironment:
@@ -111,6 +113,23 @@ def assign_and_verify(
                 f"Unknown solids: {sorted(missing_solids)}; "
                 f"unknown materials: {sorted(missing_materials)}"
             )
+        if bindings.enumerate_shapes is not None:
+            actual_shape_names = set(bindings.enumerate_shapes(project))
+            missing_real_shapes = set(assignments) - actual_shape_names
+            if missing_real_shapes:
+                raise ValueError(
+                    f"Solid not found in official CST VBA catalog: {sorted(missing_real_shapes)}"
+                )
+        if bindings.material_exists is not None:
+            missing_real_materials = [
+                name
+                for name in sorted(set(assignments.values()))
+                if not bindings.material_exists(project, name)
+            ]
+            if missing_real_materials:
+                raise ValueError(
+                    f"Material not found by CST VBA Material.Exists: {missing_real_materials}"
+                )
         for solid_id, material_name in assignments.items():
             bindings.assign_material(project, solid_id, material_name)
         project.save(str(destination), allow_overwrite=True)
