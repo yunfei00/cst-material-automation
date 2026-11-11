@@ -1,48 +1,73 @@
-# P1/P2 验证说明（CST 2025 SP1）
+# CST 2025 SP1 — P1 / P2 真实工程验证说明
 
-## 先说明当前状态
+> 输入是 **一个已经包含结构和材料定义的 CST 工程文件**。不导入 SAT、不导入材料库。所有操作均在公司授权 Windows 电脑本地执行。
 
-**P1/P2 的纯 Python 流程已经编写，但尚未接入真实 CST 2025 SP1 的 Solid/Material 读取及材料赋值接口。当前不能进行真实业务验收。**
+## 开发状态（务必先看）
 
-- P1 目标：打开已有 `.cst` 工程，列出 Component / Solid / Material。
-- P2 目标：仅修改工程副本，赋予已有材料，保存、重新打开并核对。
-- 已确认的 CST Python 方法：`cst.interface.DesignEnvironment()`、`env.open_project(path)`、`project.save(...)`、`project.close()`。
-- 尚缺三个具体方法：枚举 Solid、枚举 Material、给 Solid 赋材料。需要根据 CST 官方手册或本机已验证示例补全 `CSTBindings`。
-- **不要直接运行 `assign_and_verify()` 操作公司工程**：尚未完成真实 CST 接口和工程依赖文件验证。
+- 已对照用户上传的 CST Python Libraries HTML 手册，实现 Python API 入口、工程树读取、保存和重新打开。
+- P1：`inventory` 命令读取已有工程的 Component/Solid/Material，并尝试查询每个 Solid 当前的材料。
+- P2：`assign` 命令根据指定的 Solid → 已有材料名称，复制原工程、修改副本、保存，再打开检查。
+- **尚未在真正 CST 2025 SP1 上运行**。Python 文档没有列出三维实体材料查询与赋值命令；使用的 VBA `Solid.GetMaterialNameForShape` / `Solid.ChangeMaterial` 来自 CST VBA 参考资料，需要实机确认。CI 的模拟测试不能代替实机成功。
+- 第一次请在**非生产的测试 CST 工程**上运行，以核实树路径形式、VBA 文件查询是否可用、材料名称是否需要完整路径。
+- 本程序从 `model3d.get_tree_items()` 中提取 `Components`、`Materials` 的末端路径。若工程树格式不同，会明确报错，不会猜测目标或材料。
 
-## 现在可以运行的测试（只测试 Python 逻辑）
+## 准备运行（PowerShell，同一代码块）
 
-在仓库目录的 PowerShell 中运行以下整段命令：
+在项目根目录执行。**使用此前已经安装且 `import cst` 成功的 Python 解释器**；不要求重复安装 CST 或扫描环境。
+本地只需拉取这一开发分支，不用切换 main。
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 git fetch origin
-if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
+if ($LASTEXITCODE -ne 0) { throw '获取分支失败' }
 git switch feat/cst-p0-probe
-if ($LASTEXITCODE -ne 0) { throw '切换分支失败，请检查本地改动' }
+if ($LASTEXITCODE -ne 0) { throw '切换分支失败' }
 git pull --ff-only origin feat/cst-p0-probe
-if ($LASTEXITCODE -ne 0) { throw '更新分支失败，请检查本地改动' }
-uv sync --group dev
-if ($LASTEXITCODE -ne 0) { throw '依赖安装失败' }
-uv run ruff check .
-if ($LASTEXITCODE -ne 0) { throw 'Ruff 检查失败' }
-uv run pytest -m 'not cst_real'
-if ($LASTEXITCODE -ne 0) { throw '单元测试失败' }
+if ($LASTEXITCODE -ne 0) { throw '更新代码失败' }
+$env:PYTHONPATH = (Join-Path (Get-Location) 'src')
+
+# 修改为本机已经存在、包含结构和材料的测试 CST 工程
+$source = 'D:\CST_Test\Existing.cst'
+
+# P1：仅读取，原工程不修改；结果在当前目录 P1_Report.json
+python -m cst_material.cli inventory --source $source --report 'P1_Report.json'
+Get-Content 'P1_Report.json' -Encoding UTF8
+
+# P2：先从 P1_Report.json 挑选一个准确的 Solid 和已有材料名称
+# 将下面三个变量替换为真实值（示例仅演示命令格式）
+$solid = 'component1:solid1'
+$material = 'Copper'
+$dest = 'D:\CST_Test\Output_Assigned.cst'
+
+# 此命令将创建新工程（目标文件必须不存在），并重新打开验证
+python -m cst_material.cli assign --source $source --dest $dest --solid $solid --material $material --report 'P2_Report.json'
+Get-Content 'P2_Report.json' -Encoding UTF8
 ```
 
-预期：Ruff 无错误、pytest 通过。测试使用模拟 CST 对象，不会打开真实 CST 工程。
+**注意：** 本工程的 `python -m` 会采用当前终端的 Python；若 `import cst` 是安装在另一个虚拟环境，请切换到已验证过的解释器即可。真实 CST 验证不需要使用 `uv run` 创建新的独立 Python 环境。
 
-## 真正 P1/P2 验收时需要交付什么
+## JSON 报告和验收条件
 
-在三个真实接口补齐之后，开发者必须提供：
+- P1：`solid_count`、`material_count`、`solids`、`materials` 和 `tree_items`，供本机核查。查询实体当前材料成功时，各 Solid 的 `material` 非空。查询失败则状态 `PARTIAL`，保留已读取内容和异常原因。
+- P2：只有成功保存副本、关闭、重新打开，并且对应 Solid 的材料名与期望一致，才标记 `PASS`。
+- 任意错误报告为 `FAIL` 并返回非零退出码。**即使失败，目标副本也可能保留部分变化，不应作为生产工程使用；原工程不被修改。**
+- P2 拒绝覆盖存在的目标文件，拒绝将原工程作为目标，拒绝找不到的 Solid 或材料名。
+- `--mapping` 可替代 `--solid/--material` 批量赋值，JSON 格式：`{"component1:solid1":"Copper","component1:solid2":"FR4"}`。
 
-1. 简单运行入口：`P1` 指定现有 `.cst` 工程，输出结构及材料清单。
-2. `P2` 指定工程副本及明确的 Solid→材料映射，不覆盖原工程。
-3. 生成本地中文报告：读取数量、赋值前后对比、失败原因、保存与回读结果。
-4. 真实 CST Windows 验收：原始工程保持不变、目标工程能正常打开、材料赋值正确。
+## 边界与安全
 
-在此之前，**不要把 GitHub CI 通过解释成 P1/P2 真实功能通过**。
+- P1 使用临时工程副本，以便查询 VBA 不在原工程增加 History；临时副本在结束后清理。
+- P2 只在新输出文件上执行材料修改。保存后的回读在重新打开的工程里执行，不将查询宏再次保存。
+- 目前工程复制仅覆盖单个 `.cst` 文件。如果原工程还有依赖的外部文件、同名工程结果目录等，需要在本机另行确认关联文件处理。
+- 不上传 CST、几何结构、材料清单、公司路径、日志或任何设计数据到个人 GitHub。
+- 真实 CST 验证通过之前，不将 P1/P2 标记为已完成真实业务验收。
 
-## 数据安全
+## 开发者单元测试（不需要 CST）
 
-仅在授权 Windows 电脑操作公司工程；不得将原始 CST 文件、材料库、结构清单、内部路径或运行日志上传个人 GitHub。
+```powershell
+uv sync --group dev
+uv run ruff check .
+uv run pytest -m 'not cst_real'
+```
+
+这组测试由 GitHub CI 自动执行。工程师无需反复执行，不代表 Windows CST SP1 已通过。
