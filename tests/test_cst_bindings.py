@@ -8,6 +8,7 @@ from cst_material.cst_bindings import (
     assign_material,
     binding,
     read_assigned_materials,
+    read_shape_catalog,
 )
 
 
@@ -80,3 +81,42 @@ def test_tree_empty_fails_closed():
     p.model3d.get_tree_items = list
     with pytest.raises(RuntimeError, match="Solid"):
         read_inventory(p, binding())
+
+
+def test_documented_vba_shape_catalog(monkeypatch):
+    p = FakeProject()
+
+    def write_catalog(header, script):
+        path_line = next(line for line in script.splitlines() if line.startswith("Open "))
+        import re
+
+        match = re.match(r'Open "(.+)" For Output As #fh', path_line)
+        assert match
+        assert "Solid.GetNumberOfShapes" in script
+        assert "Solid.GetNameOfShapeFromIndex(i)" in script
+        assert "Solid.GetMaterialNameForShape(shapeName)" in script
+        Path(match.group(1)).write_text(
+            "2\nmain:solid1\nCopper\nmain:solid2\nVacuum\n", encoding="utf-8"
+        )
+
+    monkeypatch.setattr(p.model3d, "add_to_history", write_catalog)
+    assert read_shape_catalog(p) == {
+        "main:solid1": "Copper",
+        "main:solid2": "Vacuum",
+    }
+
+
+def test_vba_shape_catalog_rejects_partial_file(monkeypatch):
+    p = FakeProject()
+
+    def write_catalog(header, script):
+        path_line = next(line for line in script.splitlines() if line.startswith("Open "))
+        import re
+
+        match = re.match(r'Open "(.+)" For Output As #fh', path_line)
+        assert match
+        Path(match.group(1)).write_text("2\nmain:solid1\nCopper\n", encoding="utf-8")
+
+    monkeypatch.setattr(p.model3d, "add_to_history", write_catalog)
+    with pytest.raises(RuntimeError, match="不完整"):
+        read_shape_catalog(p)
