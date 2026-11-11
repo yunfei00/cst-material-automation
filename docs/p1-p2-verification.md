@@ -6,7 +6,7 @@
 
 - 已对照用户上传的 CST Python Libraries HTML 手册，实现 Python API 入口、工程树读取、保存和重新打开。
 - P1：`inventory` 命令读取已有工程的 Component/Solid/Material，并尝试查询每个 Solid 当前的材料。
-- P2：`assign` 命令根据指定的 Solid → 已有材料名称，复制原工程、修改副本、保存，再打开检查。
+- P2：`assign` 命令根据指定的 Solid → 已有材料名称，复制原工程；**在真正赋值前额外执行 `Solid.GetNameOfShapeFromIndex` 实体清单核对及 `Material.Exists` 材料存在性校验**，校验通过后才修改副本、保存并重新打开检查。
 - **官方文档已齐全，尚未在真正 CST 2025 SP1 上运行**。上传的 `Online Help.zip` 中 `mergedProjects/VBA_3D/common_vbasolido/common_vbasolido_solid_object.htm` 正式定义了 `Solid.GetNumberOfShapes`、`GetNameOfShapeFromIndex`、`GetMaterialNameForShape` 和 `ChangeMaterial`；`special_vbalayer/special_vbalayerolayer_object.htm` 定义了 `Material.Exists`。接口名与参数已核实；执行行为仍需实机验收，CI 模拟测试不能代替实机成功。
 - 第一次请在**非生产的测试 CST 工程**上运行，以核实树路径形式、VBA 文件查询是否可用、材料名称是否需要完整路径。
 - P1 从 `model3d.get_tree_items()` 提取 `Components`、`Materials`，再通过官方 VBA 的 `Solid.GetNumberOfShapes` 与 `GetNameOfShapeFromIndex` 核对真正的 Solid 集合，避免误将树叶子节点视为实体。若两者不一致，报告 `PARTIAL` 并列出差异；不隐瞒错误。
@@ -51,7 +51,7 @@ Get-Content 'local-data/P2_Report.json' -Encoding UTF8
 - P1：`solid_count`、`material_count`、`solids`、`materials`、`tree_items` 和 `vba_solid_count`，供本机核查。实体没有赋材时 `material` 可为空；官方 VBA 实体枚举与工程树不一致、或 VBA 查询失败时状态 `PARTIAL`，保留已读取内容和异常原因。
 - P2：只有成功保存副本、关闭、重新打开，并且对应 Solid 的材料名与期望一致，才标记 `PASS`。
 - 任意错误报告为 `FAIL` 并返回非零退出码。**即使失败，目标副本也可能保留部分变化，不应作为生产工程使用；原工程不被修改。**
-- P2 拒绝覆盖存在的目标文件，拒绝将原工程作为目标，拒绝找不到的 Solid 或材料名。
+- P2 拒绝覆盖存在的目标文件，拒绝将原工程作为目标，拒绝找不到的 Solid 或材料名；若官方 VBA 枚举中不存在目标实体、`Material.Exists` 返回 False，也拒绝赋值。
 - `--mapping` 可替代 `--solid/--material` 批量赋值，JSON 格式：`{"component1:solid1":"Copper","component1:solid2":"FR4"}`。
 
 ## 边界与安全
