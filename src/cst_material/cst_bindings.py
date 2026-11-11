@@ -191,10 +191,45 @@ def read_shape_catalog(project) -> dict[str, str]:
         result_file.unlink(missing_ok=True)
 
 
+def material_exists(project, material_name: str) -> bool:
+    """Confirm a material exists using the official Material.Exists VBA API.
+
+    Must be called only on an unsaved project copy; the VBA query may leave
+    a temporary History entry even though it never changes materials.
+    """
+    fd, tmp = tempfile.mkstemp(prefix="cst_material_exists_", suffix=".txt")
+    os.close(fd)
+    result_file = Path(tmp)
+    try:
+        result_file.unlink()
+        code = [
+            "Dim fh As Integer",
+            "fh = FreeFile",
+            f"Open {_vba_string(str(result_file))} For Output As #fh",
+            f"Print #fh, CStr(Material.Exists({_vba_string(material_name)}))",
+            "Close #fh",
+        ]
+        _modeler(project).add_to_history(
+            "CST Material Automation: Verify material exists (discard history)",
+            "\n".join(code),
+        )
+        if not result_file.is_file():
+            raise RuntimeError("CST VBA Material.Exists 未生成验证结果")
+        encoding = "mbcs" if os.name == "nt" else "utf-8"
+        result = result_file.read_text(encoding=encoding).strip().lower()
+        if result not in {"true", "false"}:
+            raise RuntimeError(f"材料存在性查询结果异常：{result!r}")
+        return result == "true"
+    finally:
+        result_file.unlink(missing_ok=True)
+
+
 def binding() -> CSTBindings:
     return CSTBindings(
         read_solids=read_solids,
         read_materials=read_materials,
         assign_material=assign_material,
         read_assigned_materials=read_assigned_materials,
+        enumerate_shapes=read_shape_catalog,
+        material_exists=material_exists,
     )
