@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from cst_material.cst_api import assign_and_verify, connect, read_inventory
-from cst_material.cst_bindings import binding
+from cst_material.cst_bindings import binding, read_shape_catalog
 
 
 def _report(path: Path, data: dict) -> None:
@@ -48,17 +48,25 @@ def _run_inventory(source: Path, output: dict) -> None:
                 inventory = read_inventory(project, bindings)
                 output.update(_snapshot(inventory))
                 try:
-                    query = bindings.read_assigned_materials
-                    assert query is not None
-                    assigned = query(
-                        project, tuple(item.identifier for item in inventory.solids)
-                    )
+                    # Official VBA enumeration confirms the tree paths actually
+                    # refer to Solid objects, instead of assuming every leaf
+                    # beneath Components is a Solid.
+                    catalog = read_shape_catalog(project)
+                    output["vba_solid_count"] = len(catalog)
+                    expected = {row["identifier"] for row in output["solids"]}
+                    actual = set(catalog)
+                    if expected != actual:
+                        output.setdefault("warnings", []).append(
+                            "工程树与 CST Solid.GetNameOfShapeFromIndex 枚举不一致；"
+                            f"仅工程树有：{sorted(expected - actual)}；"
+                            f"仅官方 VBA 有：{sorted(actual - expected)}"
+                        )
                     for row in output["solids"]:
-                        row["material"] = assigned.get(row["identifier"])
+                        row["material"] = catalog.get(row["identifier"])
                 except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
-                    output["warnings"] = [
-                        f"三维实体材料查询失败（结构和材料清单已读取）：{exc}"
-                    ]
+                    output.setdefault("warnings", []).append(
+                        f"官方 VBA 实体和材料查询失败：{type(exc).__name__}: {exc}"
+                    )
             finally:
                 project.close()
         finally:
