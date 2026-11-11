@@ -7,7 +7,7 @@ the installed CST 2025 SP1 documentation. No guessed CST methods are invoked.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -132,7 +132,13 @@ def assign_and_verify(
         }
         if mismatch:
             raise RuntimeError(f"Material verification failed: {mismatch}")
-        return result
+        return ProjectInventory(
+            solids=tuple(
+                replace(s, material=observed.get(s.identifier, s.material))
+                for s in result.solids
+            ),
+            materials=result.materials,
+        )
     finally:
         if project is not None:
             project.close()
