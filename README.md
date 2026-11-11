@@ -55,3 +55,17 @@ uv run pytest -m "not cst_real"
 - 开发者维护代码、测试和 CI；工程师只需要验证确实依赖本机 CST 的业务功能。
 - 新增文件应有明确业务目的，不再为了环境探测增加层层框架。
 - **本分支仍是开发分支，未经授权不合并 main。**
+
+
+## P1/P2 开发状态（2026-11-11）
+
+已增加 `src/cst_material/cst_api.py` 和 `tests/test_cst_api.py`：
+
+- P1：`connect()`、`open_inventory()`、`read_inventory()`。
+- P2：`assign_and_verify()` 在目标路径创建工程副本、校验 Solid 和材料、调用赋值、保存、关闭、重新打开并检查结果。
+- 保护：源文件与目标文件不能相同；拒绝覆盖已有目标；拒绝未知 Solid/材料；不自动上传公司数据。
+- **尚未接通** CST 2025 SP1 的 Solid 枚举、Material 枚举和赋值 API。它们目前由 `CSTBindings` 的三个明确函数注入，不能将模拟测试视为真实 CST 验收。
+- 需要以 CST 官方帮助手册或已验证的本机调用示例补全这三个绑定，才能在公司 Windows 电脑上进行真实 P1/P2 验收。
+- 若工程依赖同名辅助目录或外部引用，必须在本机一并安全复制；当前代码仅复制单个 `.cst` 文件，不宣称覆盖所有 CST 工程依赖形式。
+
+GitHub CI 只执行不依赖 CST 的单元测试。
