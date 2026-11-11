@@ -36,6 +36,9 @@ class CSTBindings:
     read_solids: Callable[[CSTProject], tuple[Solid, ...]]
     read_materials: Callable[[CSTProject], tuple[Material, ...]]
     assign_material: Callable[[CSTProject, str, str], None]
+    read_assigned_materials: (
+        Callable[[CSTProject, tuple[str, ...]], dict[str, str]] | None
+    ) = None
 
 
 def connect() -> CSTEnvironment:
@@ -116,9 +119,12 @@ def assign_and_verify(
         reopened = environment.open_project(str(destination))
         try:
             result = read_inventory(reopened, bindings)
+            if bindings.read_assigned_materials is not None:
+                observed = bindings.read_assigned_materials(reopened, tuple(assignments))
+            else:
+                observed = {s.identifier: s.material for s in result.solids}
         finally:
             reopened.close()
-        observed = {s.identifier: s.material for s in result.solids}
         mismatch = {
             solid_id: (material, observed.get(solid_id))
             for solid_id, material in assignments.items()
