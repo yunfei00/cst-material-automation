@@ -7,7 +7,7 @@
 - 已对照用户上传的 CST Python Libraries HTML 手册和 CST VBA_3D 手册，实现 Python 连接、VBA 实体与材料枚举、保存和重新打开。**由于实际工程触发 `get_tree_items()` 的 UTF-8 解码错误，P1/P2 已绕开该 Python 工程树接口。**
 - P1：`inventory` 通过 VBA `Solid.GetNumberOfShapes`、`Solid.GetNameOfShapeFromIndex`、`Solid.GetMaterialNameForShape` 和 `Material.GetNumberOfMaterials`、`Material.GetNameOfMaterialFromIndex` 读取当前工程 Solid、Component 与 Material，不再使用 `get_tree_items()`。
 - P2：`assign` 命令根据指定的 Solid → 已有材料名称，复制原工程；**在真正赋值前额外执行 `Solid.GetNameOfShapeFromIndex` 实体清单核对及 `Material.Exists` 材料存在性校验**，校验通过后才修改副本、保存并重新打开检查。
-- **官方文档已齐全，尚未在真正 CST 2025 SP1 上运行**。上传的 `Online Help.zip` 中 `mergedProjects/VBA_3D/common_vbasolido/common_vbasolido_solid_object.htm` 正式定义了 `Solid.GetNumberOfShapes`、`GetNameOfShapeFromIndex`、`GetMaterialNameForShape` 和 `ChangeMaterial`；`special_vbalayer/special_vbalayerolayer_object.htm` 定义了 `Material.Exists`。接口名与参数已核实；执行行为仍需实机验收，CI 模拟测试不能代替实机成功。
+- **官方文档已齐全，且用户已于 2026-11-12 在真实 CST 2025 SP1 工程上确认 P1/P2 通过**。上传的 `Online Help.zip` 中 `mergedProjects/VBA_3D/common_vbasolido/common_vbasolido_solid_object.htm` 正式定义了 `Solid.GetNumberOfShapes`、`GetNameOfShapeFromIndex`、`GetMaterialNameForShape` 和 `ChangeMaterial`；`special_vbalayer/special_vbalayerolayer_object.htm` 定义了 `Material.Exists`。接口名与参数已核实；真实 P1/P2 已通过，但后续每个新增工程类型和新功能仍应进行实机核验，CI 模拟测试不等于完整真实验收。
 - 第一次请在**非生产的测试 CST 工程**上运行，以核实树路径形式、VBA 文件查询是否可用、材料名称是否需要完整路径。
 - P1 直接从官方 VBA 枚举得到 Solid 与 Material 列表；不会把树叶子节点误认为 Solid。VBA 枚举失败、缺失、数量不符时明确返回 `FAIL`，不写入伪造列表。
 
@@ -60,7 +60,7 @@ Get-Content 'local-data/P2_Report.json' -Encoding UTF8
 - P2 先在新输出路径的工程副本上执行只读 VBA 预检；检查完成后关闭、**用原工程内容覆盖这个尚未赋材的预检副本并重新打开**，再只写入真实材料赋值命令，避免临时 VBA 文件查询记录进入交付工程。保存后的回读不再次保存查询 History。
 - 目前工程复制仅覆盖单个 `.cst` 文件。如果原工程还有依赖的外部文件、同名工程结果目录等，需要在本机另行确认关联文件处理。
 - 不上传 CST、几何结构、材料清单、公司路径、日志或任何设计数据到个人 GitHub。
-- 真实 CST 验证通过之前，不将 P1/P2 标记为已完成真实业务验收。
+- 用户已确认 P1/P2 在真实 CST 2025 SP1 工程中通过；此结论仅覆盖已测试的工程与操作，不代表所有材料属性和外部依赖都完成验证。
 
 
 ## P2 材料存在性返回 -1：CST VBA Boolean 兼容（2026-11-12）
@@ -103,4 +103,4 @@ uv run ruff check .
 uv run pytest -m 'not cst_real'
 ```
 
-这组测试由 GitHub CI 自动执行。工程师无需反复执行，不代表 Windows CST SP1 已通过。
+这组测试由 GitHub CI 自动执行，只负责模拟回归。P1/P2 的真实 CST SP1 验收已由用户单独完成；P3 等新增能力须重新实机验证。
