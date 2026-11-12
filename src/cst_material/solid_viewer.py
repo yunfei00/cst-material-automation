@@ -17,6 +17,7 @@ from cst_material.occt_geometry import (
     geometry_metrics,
     read_step,
 )
+from cst_material.knowledge_store import store_confirmation
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
 
 
@@ -25,6 +26,7 @@ def launch_viewer(path: str | Path) -> int:
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
         QApplication,
+        QCheckBox,
         QDoubleSpinBox,
         QFormLayout,
         QLabel,
@@ -51,6 +53,7 @@ def launch_viewer(path: str | Path) -> int:
             self.resize(1450, 850)
             self.root = target if target.is_dir() else None
             self.records = []
+            self.record_lookup = {}
             self.active_record = None
             self.active_solids = None
             self.tempdir = tempfile.TemporaryDirectory(prefix="cst_viewer_")
@@ -65,7 +68,7 @@ def launch_viewer(path: str | Path) -> int:
             self.search.setPlaceholderText("输入完整 Solid ID 或关键字过滤")
             left_layout.addWidget(self.search)
             self.tree = QTreeWidget()
-            self.tree.setHeaderLabels(["Solid ID"])
+            self.tree.setHeaderLabels(["Solid ID", "识别结果"])
             left_layout.addWidget(self.tree)
             splitter.addWidget(left)
 
@@ -99,6 +102,18 @@ def launch_viewer(path: str | Path) -> int:
             right_layout.addWidget(self.answer)
             self.reset_button = QPushButton("重置三维视角")
             right_layout.addWidget(self.reset_button)
+            right_layout.addWidget(QLabel("人工确认零件身份 / 材料"))
+            self.confirmed_type = QLineEdit()
+            self.confirmed_type.setPlaceholderText("真实零件类别，例如 SPRING_CONTACT")
+            right_layout.addWidget(self.confirmed_type)
+            self.confirmed_material = QLineEdit()
+            self.confirmed_material.setPlaceholderText("CST 中已有材料名（可留空）")
+            right_layout.addWidget(self.confirmed_material)
+            self.approve_material = QCheckBox("我已核实具体材料，允许后续自动赋材")
+            right_layout.addWidget(self.approve_material)
+            self.save_confirmation = QPushButton("保存本机确认结果")
+            self.save_confirmation.setEnabled(bool(self.root))
+            right_layout.addWidget(self.save_confirmation)
             right_layout.addStretch()
             splitter.addWidget(right)
             splitter.setSizes([260, 880, 310])
@@ -107,12 +122,18 @@ def launch_viewer(path: str | Path) -> int:
             self.tree.currentItemChanged.connect(self._select_solid)
             self.check_button.clicked.connect(self._query_point)
             self.reset_button.clicked.connect(self.plotter.reset_camera)
+            self.save_confirmation.clicked.connect(self._confirm_identity)
 
             if self.root:
-                catalog = load_catalog(self.root)
+                catalog = load_catalog(self.root, verify_files=False)
                 self.records = catalog["records"]
+                self.record_lookup = {rec["solid_id"]: rec for rec in self.records}
                 for rec in self.records:
-                    item = QTreeWidgetItem([rec["solid_id"]])
+                    item = QTreeWidgetItem([
+                        rec["solid_id"],
+                        rec.get("part_type") if rec.get("part_type") != "UNKNOWN"
+                        else (rec.get("candidate") or "UNKNOWN"),
+                    ])
                     self.tree.addTopLevelItem(item)
                 self.statusBar().showMessage(
                     f"已加载 {len(self.records)} 条 Solid 索引；仅按需读取三维网格"
@@ -126,12 +147,15 @@ def launch_viewer(path: str | Path) -> int:
             value = keyword.casefold().strip()
             for pos in range(self.tree.topLevelItemCount()):
                 item = self.tree.topLevelItem(pos)
-                item.setHidden(value not in item.text(0).casefold())
+                item.setHidden(
+                    value not in item.text(0).casefold()
+                    and value not in item.text(1).casefold()
+                )
 
         def _select_solid(self, item, _previous):
             if item is None or not self.root:
                 return
-            rec = next((r for r in self.records if r["solid_id"] == item.text(0)), None)
+            rec = self.record_lookup.get(item.text(0))
             if rec is None:
                 return
             start = time.perf_counter()
@@ -166,12 +190,23 @@ def launch_viewer(path: str | Path) -> int:
             feats = rec.get("features") or geometry_metrics(solids)
             self.info.setText(
                 f"Solid ID: {rec['solid_id']}\n"
+                f"识别身份: {rec.get('part_type', 'UNKNOWN')} "
+                f"[{rec.get('identity_status', 'UNREVIEWED')}]\n"
+                f"形态候选: {rec.get('candidate') or '无'}\n"
+                f"识别依据: {'; '.join(rec.get('identity_evidence', []))}\n"
+                f"当前材料: {rec.get('material') or '未知'}\n"
                 f"体积: {feats['volume_mm3']:.6g} mm³\n"
                 f"面积: {feats['surface_mm2']:.6g} mm²\n"
                 f"面数: {feats['face_count']}；边数: {feats['edge_count']}\n"
                 f"外形尺寸: {feats['dimensions_mm']}\n"
                 f"读取/显示: {time.perf_counter() - start:.3f} s"
             )
+            self.confirmed_type.setText(
+                rec.get("part_type") if rec.get("part_type") not in (None, "UNKNOWN")
+                else (rec.get("candidate") or "")
+            )
+            self.confirmed_material.setText("")
+            self.approve_material.setChecked(False)
             self.answer.setText("请输入 XYZ，判断是否在精确 B-rep 实体内部。")
 
         def _on_picked(self, _picked):
@@ -199,6 +234,30 @@ def launch_viewer(path: str | Path) -> int:
                 )
             except Exception as exc:  # noqa: BLE001 - GUI reports unexpected errors
                 self.answer.setText(f"查询失败：{type(exc).__name__}: {exc}")
+
+        def _confirm_identity(self):
+            if not self.root or self.active_record is None:
+                self.answer.setText("请先选择来自几何索引的 Solid")
+                return
+            try:
+                target = store_confirmation(
+                    self.root,
+                    self.active_record["solid_id"],
+                    self.confirmed_type.text(),
+                    material=self.confirmed_material.text(),
+                    approve_material=self.approve_material.isChecked(),
+                )
+                self.active_record["part_type"] = self.confirmed_type.text().strip()
+                self.active_record["identity_status"] = "CONFIRMED"
+                current = self.tree.currentItem()
+                if current is not None:
+                    current.setText(1, self.active_record["part_type"])
+                self.answer.setText(
+                    f"已保存在本机：{target}。"
+                    "再次处理工程时将根据原 CST 指纹复用此确认信息。"
+                )
+            except Exception as exc:  # noqa: BLE001 - show explicit approval errors
+                self.answer.setText(f"无法保存确认：{type(exc).__name__}: {exc}")
 
         def closeEvent(self, event):
             self.plotter.close()
