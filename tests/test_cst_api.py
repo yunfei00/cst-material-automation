@@ -62,7 +62,7 @@ def test_assign_and_reopen(tmp_path: Path):
     assert result.solids[0].material == "Copper"
     assert src.read_bytes() == b"original"
     assert dst.is_file()
-    assert len(env.opened) == 2
+    assert len(env.opened) == 3  # preflight copy, clean assignment copy, readback
 
 
 def test_never_overwrite_existing_target(tmp_path: Path):
