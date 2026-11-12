@@ -11,13 +11,13 @@ import tempfile
 import time
 from pathlib import Path
 
+from cst_material.knowledge_store import store_confirmation
 from cst_material.occt_geometry import (
     classify_point,
     export_preview_stl,
     geometry_metrics,
     read_step,
 )
-from cst_material.knowledge_store import store_confirmation
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
 
 
