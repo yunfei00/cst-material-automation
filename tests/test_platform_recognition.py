@@ -8,7 +8,7 @@ from cst_material.solid_recognition import recognize_catalog, shape_candidate
 
 
 def _catalog():
-    return {"records": [
+    return {"original_source_sha256": "synthetic-original-sha", "records": [
         {"solid_id": "assembly:spring", "material": "Vacuum", "features": {
             "step_sha256": "spring-sha", "dimensions_mm": [0.25, 2.0, 12.0],
             "face_count": 16, "surface_types": {"GeomAbs_Plane": 8, "GeomAbs_Cylinder": 8},
@@ -39,7 +39,8 @@ def test_m5_material_only_from_approved_cst_solid_or_reference():
         "schema_version": 1,
         "confirmed_solids": {
             "assembly:spring": {
-                "approved": True, "material_approved": True,
+                "approved": True, "source_sha256": "synthetic-original-sha",
+                "material_approved": True,
                 "part_type": "SPRING_CONTACT",
                 "material": "PhosphorBronze",
             },
@@ -61,7 +62,8 @@ def test_m5_unapproved_labels_and_incorrect_material_approvals_blocked():
     kb = {
         "schema_version": 1, "confirmed_solids": {
             "assembly:spring": {
-                "approved": True, "part_type": "SPRING_CONTACT",
+                "approved": True, "source_sha256": "synthetic-original-sha",
+                "part_type": "SPRING_CONTACT",
                 "material": "Copper", "material_approved": False,
             }
         }, "reference_shapes": [],
