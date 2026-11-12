@@ -94,7 +94,10 @@ def read_p1_inventory(path: Path) -> tuple[dict[str, str | None], str]:
     return catalog, source
 
 
-def build_cleanup_plan(source: Path, inventory: Path, rules_path: Path) -> dict:
+def build_cleanup_plan(
+    source: Path, inventory: Path, rules_path: Path | None = None,
+    geometry_report: Path | None = None,
+) -> dict:
     """Build immutable explicit-ID decisions, plus non-actionable name hints."""
     original = source.resolve(strict=True)
     if not original.is_file() or original.suffix.casefold() != ".cst":
@@ -103,7 +106,12 @@ def build_cleanup_plan(source: Path, inventory: Path, rules_path: Path) -> dict:
     if not _source_identity(str(original), report_source):
         raise ValueError("P1 inventory 来源工程路径与本次源 .cst 不一致")
 
-    rules = _load_json(rules_path)
+    rules = _load_json(rules_path) if rules_path is not None else {
+        "schema_version": RULE_VERSION,
+        "confirmed_delete_ids": [],
+        "protected_ids": [],
+        "variant_groups": [],
+    }
     if rules.get("schema_version") != RULE_VERSION:
         raise ValueError(f"清理规则版本必须为 {RULE_VERSION}")
     confirmed = set(_str_array(rules.get("confirmed_delete_ids"), "confirmed_delete_ids"))
@@ -154,6 +162,59 @@ def build_cleanup_plan(source: Path, inventory: Path, rules_path: Path) -> dict:
         note = "只包含明确 ID 和完整变体组选中的 Solid；仍需复核再在副本执行"
     if len(delete) >= len(rows):
         raise ValueError("拒绝清空所有 Solid")
+    # The exported P3-A volume/area can identify review priorities, NOT
+    # physical objects to delete. In EM simulation a zero-volume sheet may
+    # carry an essential PEC/conductive boundary or excitation.
+    zero_volume: dict[str, dict] = {}
+    if geometry_report is not None:
+        geo = _load_json(geometry_report)
+        if geo.get("task") != "geometry" or geo.get("status") != "PASS":
+            raise ValueError("仅接受通过的 P3-A geometry 原始报告")
+        if not _source_identity(geo.get("source", ""), str(original)):
+            raise ValueError("P3-A 来源与当前 .cst 工程路径不同")
+        payload = geo.get("geometry")
+        if not isinstance(payload, dict) or not isinstance(payload.get("features"), list):
+            raise TypeError("P3-A geometry 报告缺少完整 features")
+        features = payload["features"]
+        if len(features) != len(rows):
+            raise ValueError("P3-A Solid 数量与 P1 不一致")
+        observed = set()
+        for rec in features:
+            if not isinstance(rec, dict):
+                raise TypeError("P3-A Solid 记录必须为对象")
+            name = rec.get("identifier")
+            if not isinstance(name, str) or name not in rows or name in observed:
+                raise ValueError("P3-A 标识与 P1 不一致，或存在重复 ID")
+            observed.add(name)
+            if rec.get("material") != rows[name]:
+                raise ValueError("P3-A 当前 Material 与 P1 不一致")
+            volume = rec.get("volume_project_unit3")
+            area = rec.get("area_project_unit2")
+            if (
+                isinstance(volume, bool) or isinstance(area, bool)
+                or not isinstance(volume, (int, float))
+                or not isinstance(area, (int, float))
+                or volume < 0 or area < 0
+            ):
+                raise ValueError("P3-A 体积/面积类型或数值不合法")
+            import math
+
+            if not math.isfinite(volume) or not math.isfinite(area):
+                raise ValueError("P3-A 体积/面积不是有限数字")
+            if rec.get("zero_volume") is not (volume == 0):
+                raise ValueError("P3-A zero_volume 标签与体积数据不一致")
+            if volume == 0:
+                category = (
+                    "ZERO_VOLUME_POSITIVE_AREA_KEEP_REVIEW" if area > 0
+                    else "ZERO_VOLUME_ZERO_AREA_DIAGNOSE"
+                )
+                zero_volume[name] = {
+                    "identifier": name,
+                    "volume_project_unit3": volume,
+                    "area_project_unit2": area,
+                    "zero_volume_review_class": category,
+                    "decision": "REVIEW_ONLY_NEVER_AUTO_DELETE",
+                }
     hints = []
     for name in sorted(rows):
         if name in delete:
@@ -161,11 +222,12 @@ def build_cleanup_plan(source: Path, inventory: Path, rules_path: Path) -> dict:
         lowered = name.casefold()
         tags = [tag for tag, tokens in REVIEW_HINTS if any(token in lowered for token in tokens)]
         relevant = [token for token in RETAIN_BY_DEFAULT if token in lowered]
-        if tags or relevant:
+        if tags or relevant or name in zero_volume:
             hints.append({
                 "identifier": name,
                 "review_hints": tags,
                 "sensitive_keep_by_default": bool(relevant),
+                "zero_volume_review": zero_volume.get(name),
                 "decision": "KEEP_UNLESS_EXPLICITLY_CONFIRMED",
             })
     expected_remaining = set(rows) - delete
@@ -187,9 +249,17 @@ def build_cleanup_plan(source: Path, inventory: Path, rules_path: Path) -> dict:
         "keep_ids_count": len(expected_remaining),
         "review_suggestions": hints,
         "review_suggestion_count": len(hints),
+        "zero_volume_review_count": len(zero_volume),
+        "zero_volume_positive_area_count": sum(
+            obj["area_project_unit2"] > 0 for obj in zero_volume.values()
+        ),
+        "zero_volume_zero_area_count": sum(
+            obj["area_project_unit2"] == 0 for obj in zero_volume.values()
+        ),
+        "geometry_review_supplied": geometry_report is not None,
         "note": note,
         "warnings": [
-            "名称提示仅供人工检查，不会自动删除",
+            "名称提示和体积为零的几何体仅供人工检查，不会自动删除",
             "USB/耳机/马达/前摄/连接器等真实器件默认保留，是否剔除取决于电磁仿真目标",
             "变体保留哪一个必须通过 variant_groups 显式指定，不按版本号自动猜测",
             "尚未执行任何实际删除；建议先用非生产副本做少量 Solid 实机验收",
@@ -224,151 +294,3 @@ def validate_plan_for_apply(plan: dict, source: Path) -> tuple[list[str], int]:
     return ids, original_count
 
 
-
-def apply_confirmed_cleanup(
-    source: Path,
-    destination: Path,
-    plan_path: Path,
-    approved_delete_count: int,
-    *,
-    environment=None,
-    catalog_reader=None,
-    delete_batch=None,
-) -> dict:
-    """Copy-only deletion using CST 2025 official Solid.Delete in History.
-
-    Requires explicit operator approval of deletion count. Preflight verifies
-    all actual IDs/materials and inventory hash, then discards query history.
-    Reopens a clean copy, deletes only exact selected Solid IDs, saves the copy,
-    and reopens to compare *all* remaining names/material assignments.
-
-    Does not remove component trees, delete materials, touch original project,
-    or use regex/keywords for deletion. Failures are never reported as PASS.
-    """
-    import shutil
-
-    from cst_material.cst_api import connect
-    from cst_material.cst_bindings import _modeler, _vba_string, read_shape_catalog
-
-    plan = _load_json(plan_path)
-    confirmed_ids, count_before = validate_plan_for_apply(plan, source)
-    if (
-        isinstance(approved_delete_count, bool)
-        or not isinstance(approved_delete_count, int)
-        or approved_delete_count != len(confirmed_ids)
-    ):
-        raise ValueError(
-            "批准数量必须与清理方案的实际删除 Solid 数量一致，"
-            "请先阅读 cleanup-plan 结果"
-        )
-    original = source.resolve(strict=True)
-    dest = destination.resolve()
-    if original == dest:
-        raise ValueError("绝不允许把原工程作为删除目标")
-    if original.suffix.casefold() != ".cst" or dest.suffix.casefold() != ".cst":
-        raise ValueError("源文件与目标文件都必须是 .cst")
-    if dest.exists():
-        raise FileExistsError("目标 CST 工程已存在，不允许覆盖")
-    if not dest.parent.is_dir():
-        raise FileNotFoundError("目标工程父目录不存在")
-
-    read_catalog = catalog_reader or read_shape_catalog
-
-    def delete_selected(project, ids: list[str]) -> None:
-        # The CST 2025 shipped official VBA Solid Object help documents:
-        # Solid.Delete(solidname). Avoid Component.Delete because that may
-        # recursively delete solids unrelated to the approved list.
-        for start in range(0, len(ids), 20):
-            batch = ids[start : start + 20]
-            commands = [f"Solid.Delete {_vba_string(name)}" for name in batch]
-            _modeler(project).add_to_history(
-                f"CST Material Automation: Confirmed cleanup {start + 1}-"
-                f"{start + len(batch)}",
-                "\n".join(commands),
-            )
-
-    delete_fn = delete_batch or delete_selected
-    created_environment = environment is None
-    env = connect() if created_environment else environment
-    project = None
-    dest_created = False
-    before: dict[str, str] | None = None
-    try:
-        # 'xb' guarantees this call cannot silently overwrite an existing CST.
-        with original.open("rb") as read, dest.open("xb") as write:
-            dest_created = True
-            shutil.copyfileobj(read, write, length=4 * 1024 * 1024)
-        project = env.open_project(str(dest))
-        try:
-            before = read_catalog(project)
-        finally:
-            project.close()
-            project = None
-        if len(before) != count_before or _digest_catalog(before) != plan.get(
-            "inventory_catalog_sha256"
-        ):
-            raise ValueError(
-                "CST 实际读取 Solid/Material 与 P1 清单不同；"
-                "可能工程版本变化或历史报告过期，不允许删除"
-            )
-        if not set(confirmed_ids) <= set(before):
-            raise ValueError("待删 Solid 在 CST 实际工程中不存在，禁止继续")
-        # Throw away all temporary file-writing VBA history from preflight.
-        # Never save the preflight project copy.
-        shutil.copyfile(original, dest)
-        project = env.open_project(str(dest))
-        delete_fn(project, confirmed_ids)
-        project.save(str(dest), allow_overwrite=True)
-        project.close()
-        project = None
-        # Verify exact deletion AND every remaining Solid's assigned material.
-        project = env.open_project(str(dest))
-        observed = read_catalog(project)
-        expected = {id_: mat for id_, mat in before.items() if id_ not in confirmed_ids}
-        if observed != expected:
-            unexpected_removed = sorted(set(expected) - set(observed))
-            still_present = sorted(set(confirmed_ids) & set(observed))
-            changed_materials = [
-                id_ for id_ in expected.keys() & observed.keys()
-                if expected[id_] != observed[id_]
-            ]
-            raise RuntimeError(
-                "CST 删除后回读未通过："
-                f"误删={unexpected_removed[:5]}，"
-                f"未删除={still_present[:5]}，"
-                f"材料变化={changed_materials[:5]}"
-            )
-        return {
-            "task": "cleanup-apply",
-            "status": "PASS",
-            "stage": "已在新 CST 工程副本删除指定实体并回读验证",
-            "source": str(original),
-            "destination": str(dest),
-            "source_solid_count": count_before,
-            "deleted_solid_count": len(confirmed_ids),
-            "remaining_solid_count": len(observed),
-            "deleted_ids": confirmed_ids,
-            "all_remaining_materials_unchanged": True,
-            "warnings": [
-                "只验证 Solid 数量、ID 和剩余材料；CST 求解设置、网格与仿真有效性仍需工程师确认",
-                "此副本已不同于原工程，后续 P3/P4 报告不能再复用删除前的空间数据",
-            ],
-        }
-    finally:
-        if project is not None:
-            try:
-                project.close()
-            except Exception:  # noqa: BLE001 - vendor-specific COM exceptions
-                pass  # Preserve original CST error, never touch other projects.
-        if created_environment:
-            try:
-                env.close()
-            except Exception:  # noqa: BLE001 - vendor-specific COM exceptions
-                pass
-        # On failure a destination may be partially modified; never claim
-        # it is safe for simulation. Do not attempt to delete a file that CST
-        # may still hold open. The user can inspect it at the recorded path.
-        if dest_created:
-            # Existence alone is not a success claim; the caller's JSON
-            # status is set to PASS only after the verification above.
-            pass
