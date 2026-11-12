@@ -275,14 +275,22 @@ COM_RUNNER = r"""
 $ErrorActionPreference = 'Stop'
 $app = $null
 $project = $null
+$events = New-Object 'System.Collections.Generic.List[string]'
 try {
     $app = New-Object -ComObject 'CSTStudio.Application.2025'
+    $events.Add("application_connected")
     $project = $app.OpenFile($env:CST_P3_SPATIAL_COPY)
     if ($null -eq $project) { throw "CST OLE OpenFile returned null" }
+    $events.Add("temporary_project_opened")
     $null = $project.RunScript($env:CST_P3_SPATIAL_MACRO)
+    $events.Add("macro_returned")
 } finally {
     if ($null -ne $project) {
-        try { $null = $project.Quit() } catch {
+        try {
+            $null = $project.Quit()
+            $events.Add("project_quit_returned")
+        } catch {
+            $events.Add("project_quit_failed")
             Write-Warning "Could not close temporary CST project: $($_.Exception.Message)"
         }
         try {
@@ -308,6 +316,12 @@ try {
     $app = $null
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
+    try {
+        $events.Add("powershell_com_finally_completed")
+        Set-Content -LiteralPath $env:CST_P3_SPATIAL_STATUS -Value $events -Encoding UTF8
+    } catch {
+        Write-Warning "Could not write P3-C COM lifecycle status: $($_.Exception.Message)"
+    }
 }
 """
 
@@ -403,11 +417,13 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
         output = work / "spatial-result.txt"
         script = work / "spatial-query.bas"
         bridge = work / "run-spatial.ps1"
+        status_file = work / "com-lifecycle-status.txt"
         script.write_text(build_spatial_macro(output), encoding="mbcs")
         bridge.write_text(COM_RUNNER, encoding="utf-8-sig")
         env = dict(os.environ)
         env["CST_P3_SPATIAL_COPY"] = str(copied)
         env["CST_P3_SPATIAL_MACRO"] = str(script)
+        env["CST_P3_SPATIAL_STATUS"] = str(status_file)
         try:
             result = subprocess.run(
                 [
@@ -440,6 +456,13 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
             ) from exc
         catalog = parse_spatial_data(content)
     finally:
+        if status_file.is_file():
+            try:
+                cleanup_diagnostics["com_lifecycle_events"] = (
+                    status_file.read_text(encoding="utf-8-sig").splitlines()
+                )
+            except OSError:
+                cleanup_diagnostics["com_lifecycle_events"] = ["read_failed"]
         # This cleanup cannot raise, so it never masks a previous error.
         cleanup_ok = _cleanup_workdir(work, cleanup_diagnostics)
     assert catalog is not None
