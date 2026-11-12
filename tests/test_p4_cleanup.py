@@ -59,25 +59,25 @@ def samples(tmp_path: Path):
     return source, inventory, geometry
 
 
-def test_zero_volume_is_review_only_and_never_auto_deleted(tmp_path):
+def test_rule_r001_deletes_every_zero_volume_solid_regardless_of_area_or_name(tmp_path):
     source, inventory, geometry = samples(tmp_path)
     plan = build_cleanup_plan(source, inventory, geometry_report=geometry)
     assert plan["status"] == "PASS"
     assert plan["source_solid_count"] == 7
-    assert plan["delete_count"] == 0
-    assert plan["expected_remaining_count"] == 7
+    assert plan["delete_count"] == 3
+    assert plan["expected_remaining_count"] == 4
+    assert plan["zero_volume_delete_count"] == 3
+    assert plan["delete_ids"] == [
+        "auxiliary:datum_plane", "main:Sheet_PEC", "main:empty_import"
+    ]
     assert plan["zero_volume_review_count"] == 3
     assert plan["zero_volume_positive_area_count"] == 2
     assert plan["zero_volume_zero_area_count"] == 1
+    assert plan["delete_reasons"]["main:Sheet_PEC"] == ["R001_ZERO_VOLUME"]
+    assert plan["delete_reasons"]["main:empty_import"] == ["R001_ZERO_VOLUME"]
     hints = {r["identifier"]: r for r in plan["review_suggestions"]}
-    assert hints["main:Sheet_PEC"]["zero_volume_review"][
-        "zero_volume_review_class"
-    ] == "ZERO_VOLUME_POSITIVE_AREA_KEEP_REVIEW"
-    assert hints["main:empty_import"]["zero_volume_review"][
-        "zero_volume_review_class"
-    ] == "ZERO_VOLUME_ZERO_AREA_DIAGNOSE"
     assert hints["main:USB座"]["sensitive_keep_by_default"] is True
-    assert not any(r["decision"] == "DELETE" for r in plan["review_suggestions"])
+    assert "main:Sheet_PEC" not in hints
 
 
 def test_explicit_variant_group_keeps_chosen_member_and_keeps_usb(tmp_path):
@@ -86,7 +86,7 @@ def test_explicit_variant_group_keeps_chosen_member_and_keeps_usb(tmp_path):
     rules_path.write_text(
         json.dumps({
             "schema_version": 1,
-            "confirmed_delete_ids": ["auxiliary:datum_plane"],
+            "confirmed_delete_ids": [],
             "protected_ids": ["main:USB座", "main:antenna"],
             "variant_groups": [{
                 "group_id": "group_1",
@@ -96,11 +96,13 @@ def test_explicit_variant_group_keeps_chosen_member_and_keeps_usb(tmp_path):
         }, ensure_ascii=False), encoding="utf-8",
     )
     plan = build_cleanup_plan(source, inventory, rules_path, geometry)
-    assert plan["delete_count"] == 2
-    assert plan["delete_ids"] == ["auxiliary:datum_plane", "module:alt_a"]
+    assert plan["delete_count"] == 4
+    assert plan["delete_ids"] == [
+        "auxiliary:datum_plane", "main:Sheet_PEC", "main:empty_import", "module:alt_a"
+    ]
     assert "module:alt_b" in plan["protected_ids"]
     assert "main:USB座" not in plan["delete_ids"]
-    assert "main:Sheet_PEC" not in plan["delete_ids"]
+    assert "main:Sheet_PEC" in plan["delete_ids"]
     assert validate_plan_for_apply(plan, source)[0] == plan["delete_ids"]
 
 
@@ -157,7 +159,8 @@ def test_cli_plan_does_not_call_cst_or_overwrite_original(tmp_path, monkeypatch)
     assert result == 0
     plan = json.loads(output.read_text(encoding="utf-8"))
     assert plan["status"] == "PASS"
-    assert plan["delete_count"] == 0
+    assert plan["delete_count"] == 3
+    assert plan["zero_volume_delete_count"] == 3
     assert plan["zero_volume_review_count"] == 3
     assert [p.read_bytes() for p in (source, inventory, geometry)] == before
     assert cli.main([
@@ -166,3 +169,53 @@ def test_cli_plan_does_not_call_cst_or_overwrite_original(tmp_path, monkeypatch)
         "--report", str(geometry),
     ]) == 2
     assert geometry.read_bytes() == before[2]
+
+
+
+def test_rule_r001_rejects_missing_geometry_report(tmp_path):
+    source, inventory, _ = samples(tmp_path)
+    with pytest.raises(ValueError, match="必须提供"):
+        build_cleanup_plan(source, inventory)
+
+
+def test_rule_r001_conflict_with_protected_zero_volume_rejected(tmp_path):
+    source, inventory, geometry = samples(tmp_path)
+    rules_file = tmp_path / "rules.json"
+    rules_file.write_text(json.dumps({
+        "schema_version": 1,
+        "confirmed_delete_ids": [],
+        "protected_ids": ["main:Sheet_PEC"],
+        "variant_groups": [],
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="protected_ids"):
+        build_cleanup_plan(source, inventory, rules_file, geometry)
+
+
+def test_rule_r001_conflict_with_zero_volume_variant_keeper_rejected(tmp_path):
+    source, inventory, geometry = samples(tmp_path)
+    rules_file = tmp_path / "rules.json"
+    rules_file.write_text(json.dumps({
+        "schema_version": 1,
+        "confirmed_delete_ids": [],
+        "protected_ids": [],
+        "variant_groups": [{
+            "group_id": "bad",
+            "members": ["main:Sheet_PEC", "module:alt_b"],
+            "keep": "main:Sheet_PEC",
+        }],
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="keep"):
+        build_cleanup_plan(source, inventory, rules_file, geometry)
+
+
+def test_rule_r001_includes_solid_with_protected_device_name_if_zero(tmp_path):
+    source, inventory, geometry = samples(tmp_path)
+    payload = json.loads(geometry.read_text(encoding="utf-8"))
+    payload["geometry"]["features"][0]["volume_project_unit3"] = 0
+    payload["geometry"]["features"][0]["zero_volume"] = True
+    payload["zero_volume_count"] = 4
+    geometry.write_text(json.dumps(payload), encoding="utf-8")
+    plan = build_cleanup_plan(source, inventory, geometry_report=geometry)
+    assert plan["delete_count"] == 4
+    assert "main:USB座" in plan["delete_ids"]
+    assert "main:antenna" not in plan["delete_ids"]
