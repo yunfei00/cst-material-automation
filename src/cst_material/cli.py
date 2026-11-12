@@ -347,11 +347,14 @@ def main(argv: list[str] | None = None) -> int:
         if any(report_file == Path(path).resolve() for path in source_reports):
             print("P4-A 输出路径不能覆盖任何 P3 原始报告", file=sys.stderr)
             return 2
-    if args.command == "cleanup-apply":
-        if report_file in {Path(args.source).resolve(), Path(args.dest).resolve(),
-                           Path(args.plan).resolve()}:
-            print("清理执行报告不能覆盖原工程、输出工程或规则计划", file=sys.stderr)
-            return 2
+    if (
+        args.command == "cleanup-apply"
+        and report_file in {
+            Path(args.source).resolve(), Path(args.dest).resolve(), Path(args.plan).resolve()
+        }
+    ):
+        print("清理执行报告不能覆盖原工程、输出工程或规则计划", file=sys.stderr)
+        return 2
     if args.command == "cleanup-plan":
         source_reports = [args.source, args.inventory_report]
         if args.geometry_report:
