@@ -17,7 +17,7 @@ def _inside_folder(folder: Path, relative: str) -> Path:
     return candidate
 
 
-def load_manifest(folder: str | Path) -> dict:
+def load_manifest(folder: str | Path, *, verify_files: bool = True) -> dict:
     root = Path(folder).resolve(strict=True)
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema_version") != 1 or manifest.get("unit") != "mm":
@@ -41,7 +41,7 @@ def load_manifest(folder: str | Path) -> dict:
             raise ValueError("不同 Solid 不可引用同一 STEP 文件")
         paths.append(path)
         expected_hash = entry.get("sha256")
-        if expected_hash and expected_hash != sha256_file(path):
+        if verify_files and expected_hash and expected_hash != sha256_file(path):
             raise ValueError(f"STEP 几何文件已发生变化：{name}")
     return manifest
 
@@ -81,10 +81,10 @@ def build_catalog(folder: str | Path) -> dict:
     return result
 
 
-def load_catalog(folder: str | Path) -> dict:
+def load_catalog(folder: str | Path, *, verify_files: bool = True) -> dict:
     root = Path(folder).resolve(strict=True)
     catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
-    manifest = load_manifest(root)
+    manifest = load_manifest(root, verify_files=verify_files)
     if catalog.get("schema_version") != 1 or catalog.get("unit") != "mm":
         raise ValueError("无效的几何索引")
     records = catalog.get("records")
@@ -97,8 +97,10 @@ def load_catalog(folder: str | Path) -> dict:
         if name not in allowed or name in names or rec.get("step") != allowed[name]["step"]:
             raise ValueError("几何索引映射错误或存在重复")
         names.add(name)
-        if rec["features"]["step_sha256"] != sha256_file(
-            _inside_folder(root, rec["step"])
+        expected_sha = rec["features"]["step_sha256"]
+        manifest_sha = allowed[name].get("sha256")
+        if (manifest_sha and manifest_sha != expected_sha) or (
+            verify_files and expected_sha != sha256_file(_inside_folder(root, rec["step"]))
         ):
             raise ValueError(f"几何索引过期：{name}")
     if catalog.get("source_sha256") != manifest.get("source_sha256"):
@@ -135,13 +137,15 @@ def ensure_preview_mesh(folder: str | Path, record: dict) -> Path:
     from cst_material.occt_geometry import export_preview_stl
 
     root = Path(folder).resolve(strict=True)
-    manifest = load_manifest(root)
+    manifest = load_manifest(root, verify_files=False)
     if not any(
         e["solid_id"] == record.get("solid_id") and e["step"] == record.get("step")
         for e in manifest["solids"]
     ):
         raise ValueError("所选 Solid 不在可信映射中")
     digest = record["features"]["step_sha256"]
+    if digest != sha256_file(_inside_folder(root, record["step"])):
+        raise ValueError("STEP 几何已经改变，必须重建缓存")
     mesh = root / "meshes" / f"{digest}.stl"
     if not mesh.exists():
         export_preview_stl(read_step(_inside_folder(root, record["step"])), mesh)
