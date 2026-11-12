@@ -197,7 +197,7 @@ def launch_viewer(path: str | Path) -> int:
                 self.answer.setText(
                     f"精确实体判断：{result}\n点坐标(mm)：{point}"
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - GUI reports unexpected errors
                 self.answer.setText(f"查询失败：{type(exc).__name__}: {exc}")
 
         def closeEvent(self, event):
