@@ -5,11 +5,11 @@ import json
 from pathlib import Path
 
 import pytest
+from test_p4_cleanup import samples
 
 from cst_material import cli
 from cst_material.p4_cleanup import build_cleanup_plan
 from cst_material.p4_cleanup_apply import _delete_solids, apply_cleanup_plan
-from test_p4_cleanup import samples
 
 
 class FakeModel:
