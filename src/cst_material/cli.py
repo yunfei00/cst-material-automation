@@ -16,6 +16,8 @@ from cst_material.p3_geometry import read_geometry_features
 from cst_material.p3_mtd_catalog import scan_mtd_library
 from cst_material.p3_neighbors import analyze_neighbors, read_spatial_report
 from cst_material.p3_spatial import query_spatial_from_copy, summarize_spatial
+from cst_material.p4_cleanup import build_cleanup_plan
+from cst_material.p4_cleanup_apply import apply_cleanup_plan
 from cst_material.p4_structure import build_structure_report
 
 
@@ -192,6 +194,32 @@ def _run_structure_preview(args: argparse.Namespace, output: dict) -> None:
     output["stage"] = "P4-A 结构类型候选分析完成"
 
 
+def _run_cleanup_apply(args: argparse.Namespace, output: dict) -> None:
+    """P4-C: delete exactly planned IDs from a new CST copy, verify all remaining."""
+    output["stage"] = "P4-C 核查原工程、体积报告、删除计划与输出位置"
+    result = apply_cleanup_plan(
+        Path(args.source), Path(args.dest), Path(args.plan),
+        batch_size=args.batch_size,
+    )
+    output.update(result)
+
+
+def _run_cleanup_plan(args: argparse.Namespace, output: dict) -> None:
+    """P4-C: review-only geometry/name/variant cleanup suggestions.
+
+    Never connects to CST, deletes files or mutates engineering geometry.
+    """
+    output["stage"] = "P4-C 离线校验源工程和 P1/P3-A 报告"
+    preview = build_cleanup_plan(
+        Path(args.source),
+        Path(args.inventory_report),
+        Path(args.rules) if args.rules else None,
+        Path(args.geometry_report) if args.geometry_report else None,
+    )
+    output.update(preview)
+    output["stage"] = "P4-C 只读清理预览完成，尚未执行删除"
+
+
 def _mapping(args: argparse.Namespace) -> dict[str, str]:
     result: dict[str, str] = {}
     if args.mapping:
@@ -285,6 +313,22 @@ def main(argv: list[str] | None = None) -> int:
     p4a.add_argument("--spatial-report", required=True, help="已通过的 P3-C 报告")
     p4a.add_argument("--neighbors-report", help="可选已通过的 P3-D 离线报告")
     p4a.add_argument("--report", default="local-data/P4A_Structure_Preview.json")
+    clean = commands.add_parser(
+        "cleanup-plan", help="P4-C：辅助件/零体积/显式变体组清理预览，只读不删除"
+    )
+    clean.add_argument("--source", required=True, help="原始 CST 工程路径（只读校验）")
+    clean.add_argument("--inventory-report", required=True, help="P1 inventory 原始报告")
+    clean.add_argument("--geometry-report", help="P3-A geometry 报告，用于零体积复核标签")
+    clean.add_argument("--rules", help="可选显式 JSON 规则；不提供则不生成删除计划")
+    clean.add_argument("--report", default="local-data/P4C_Cleanup_Preview.json")
+    apply = commands.add_parser(
+        "cleanup-apply", help="P4-C：对新 CST 副本删除 R001(V=0)及其他已确认 Solid，回读验收"
+    )
+    apply.add_argument("--source", required=True, help="原始工程 .cst，只读")
+    apply.add_argument("--dest", required=True, help="新输出 .cst，不能覆盖原工程或已有文件")
+    apply.add_argument("--plan", required=True, help="cleanup-plan 生成的本地 JSON 报告")
+    apply.add_argument("--batch-size", type=int, default=20, help="每批删除 1～50 个")
+    apply.add_argument("--report", default="local-data/P4C_Apply_Report.json")
     args = parser.parse_args(argv)
     # A typo in --report must never overwrite an engineering project or MTD.
     # This also covers the P1/P2 report commands without altering workflows.
@@ -302,6 +346,23 @@ def main(argv: list[str] | None = None) -> int:
             source_reports.append(args.neighbors_report)
         if any(report_file == Path(path).resolve() for path in source_reports):
             print("P4-A 输出路径不能覆盖任何 P3 原始报告", file=sys.stderr)
+            return 2
+    if (
+        args.command == "cleanup-apply"
+        and report_file in {
+            Path(args.source).resolve(), Path(args.dest).resolve(), Path(args.plan).resolve()
+        }
+    ):
+        print("清理执行报告不能覆盖原工程、输出工程或规则计划", file=sys.stderr)
+        return 2
+    if args.command == "cleanup-plan":
+        source_reports = [args.source, args.inventory_report]
+        if args.geometry_report:
+            source_reports.append(args.geometry_report)
+        if args.rules:
+            source_reports.append(args.rules)
+        if any(report_file == Path(path).resolve() for path in source_reports):
+            print("P4-C 输出不能覆盖源工程、P1/P3-A 报告或规则文件", file=sys.stderr)
             return 2
     if args.command == "scan-mtd":
         # Reject unsafe output *before* the generic error reporter writes a
@@ -337,6 +398,10 @@ def main(argv: list[str] | None = None) -> int:
             _run_spatial_offline(args, output)
         elif args.command == "structure-preview":
             _run_structure_preview(args, output)
+        elif args.command == "cleanup-plan":
+            _run_cleanup_plan(args, output)
+        elif args.command == "cleanup-apply":
+            _run_cleanup_apply(args, output)
         else:
             _run_mtd_scan(Path(args.library_root), Path(args.report), output)
     except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
