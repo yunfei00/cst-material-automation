@@ -1,4 +1,4 @@
-"""只需输入与输出 CST 路径的零体积 Solid 清理接口。
+r"""只需输入与输出 CST 路径的零体积 Solid 清理接口。
 
 Python 用法:
     from cst_material.simple_cleanup import clean_project
@@ -19,11 +19,6 @@ import time
 import traceback
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 
 def _sha256_file(file: Path) -> str:
     checksum = hashlib.sha256()
@@ -269,7 +264,7 @@ def clean_project(
         if project is not None:
             try:
                 _close_project(project)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - CST vendor-specific exceptions
                 warnings.warn(
                     f"CST 工程关闭时报告异常：{exc}", RuntimeWarning, stacklevel=2
                 )
