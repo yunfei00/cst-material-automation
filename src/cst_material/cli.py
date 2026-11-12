@@ -11,7 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from cst_material.cst_api import assign_and_verify, connect, read_inventory
-from cst_material.cst_bindings import binding, read_shape_catalog
+from cst_material.cst_bindings import binding
 
 
 def _report(path: Path, data: dict) -> None:
@@ -48,33 +48,14 @@ def _run_inventory(source: Path, output: dict) -> None:
                 model = project.model3d
                 if model is None:
                     raise RuntimeError("CST 工程不包含三维模型")
-                output["stage"] = "CST Python 读取 get_tree_items 工程树"
-                output["tree_items"] = list(model.get_tree_items())
-                output["stage"] = "从工程树提取 Solid 和 Material"
+                # CST's Python tree reader may raise UnicodeDecodeError for
+                # Chinese GBK/CP936 names. Read both catalogs via documented
+                # VBA APIs instead; no get_tree_items() call here.
+                output["stage"] = "CST VBA 枚举 Solid 和 Material"
                 inventory = read_inventory(project, bindings)
                 output.update(_snapshot(inventory))
-                try:
-                    # Official VBA enumeration confirms the tree paths actually
-                    # refer to Solid objects, instead of assuming every leaf
-                    # beneath Components is a Solid.
-                    output["stage"] = "CST VBA 枚举 Solid 及查询材料"
-                    catalog = read_shape_catalog(project)
-                    output["vba_solid_count"] = len(catalog)
-                    expected = {row["identifier"] for row in output["solids"]}
-                    actual = set(catalog)
-                    if expected != actual:
-                        output.setdefault("warnings", []).append(
-                            "工程树与 CST Solid.GetNameOfShapeFromIndex 枚举不一致；"
-                            f"仅工程树有：{sorted(expected - actual)}；"
-                            f"仅官方 VBA 有：{sorted(actual - expected)}"
-                        )
-                    for row in output["solids"]:
-                        row["material"] = catalog.get(row["identifier"])
-                except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
-                    output.setdefault("warnings", []).append(
-                        f"官方 VBA 实体和材料查询失败：{type(exc).__name__}: {exc}"
-                    )
-                    output["warning_traceback"] = traceback.format_exc()
+                output["vba_solid_count"] = len(inventory.solids)
+                output["inventory_source"] = "CST VBA Solid/Material catalogs"
             finally:
                 project.close()
         finally:
