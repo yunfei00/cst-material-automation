@@ -78,8 +78,8 @@ def test_probe_never_tries_to_stop_or_restart_processes():
     assert "RmRegisterResources" in source
 
 
-def test_nonwindows_probe_is_conservative(tmp_path, monkeypatch):
-    monkeypatch.setattr(p3_lock_diagnostics.os, "name", "posix")
+@pytest.mark.skipif(p3_lock_diagnostics.os.name == "nt", reason="Non-Windows only")
+def test_nonwindows_probe_is_conservative(tmp_path):
     info = p3_lock_diagnostics.identify_file_owners(tmp_path / "dp.parmap")
     assert info["status"] == "unsupported_platform"
     assert info["processes"] == []
