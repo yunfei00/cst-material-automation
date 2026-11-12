@@ -208,6 +208,8 @@ def build_cleanup_plan(
                     "zero_volume_review_class": category,
                     "decision": "DELETE_RULE_R001_ZERO_VOLUME",
                 }
+    if geo.get("zero_volume_count") not in (None, len(zero_volume)):
+        raise ValueError("P3-A zero_volume_count 与实际 V=0 Solid 数量不一致")
     # R001 is user-approved and unconditional: A>0 and A=0 both qualify.
     zero_ids = set(zero_volume)
     if protected & zero_ids:
@@ -312,6 +314,30 @@ def validate_plan_for_apply(plan: dict, source: Path) -> tuple[list[str], int]:
         raise ValueError("清理方案删除数量异常")
     if set(ids) & set(_str_array(plan.get("protected_ids"), "protected_ids")):
         raise ValueError("受保护 Solid 被列入删除清单")
+    geometry_path = plan.get("geometry_report_path")
+    if not isinstance(geometry_path, str) or not geometry_path:
+        raise ValueError("R001 缺少 P3-A 原始报告路径")
+    geometry = Path(geometry_path).resolve(strict=True)
+    if _sha256_file(geometry) != plan.get("geometry_report_sha256"):
+        raise ValueError("P3-A 体积报告内容已变化，请重新生成清理方案")
+    features = _load_json(geometry).get("geometry", {}).get("features")
+    if not isinstance(features, list) or len(features) != original_count:
+        raise ValueError("P3-A 原报告中的 Solid 数量与清理方案不一致")
+    zero_from_report = set()
+    for record in features:
+        if not isinstance(record, dict):
+            raise TypeError("P3-A Solid 记录不是对象")
+        name = record.get("identifier")
+        volume = record.get("volume_project_unit3")
+        if not isinstance(name, str) or not name:
+            raise ValueError("P3-A 含无效 Solid ID")
+        if isinstance(volume, bool) or not isinstance(volume, (int, float)):
+            raise TypeError("P3-A 体积不是数值")
+        if volume == 0:
+            zero_from_report.add(name)
+    zero_from_plan = set(_str_array(plan.get("zero_volume_delete_ids"), "zero_volume_delete_ids"))
+    if zero_from_report != zero_from_plan or not zero_from_report <= set(ids):
+        raise ValueError("R001 原报告 V=0 全部删除规则与计划不一致，请重新生成方案")
     return ids, original_count
 
 
