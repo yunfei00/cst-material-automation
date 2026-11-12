@@ -29,7 +29,7 @@ def load_manifest(folder: str | Path) -> dict:
     paths = []
     for entry in items:
         if not isinstance(entry, dict) or not isinstance(entry.get("solid_id"), str):
-            raise ValueError("无效的 Solid 记录")
+            raise TypeError("无效的 Solid 记录")
         name = entry["solid_id"]
         if not name or name in names or ":" not in name:
             raise ValueError("Solid ID 为空、重复或不是完整 Component:Solid")
