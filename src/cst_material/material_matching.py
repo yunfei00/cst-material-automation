@@ -8,14 +8,14 @@ def match_materials(
     manual = knowledge.get("confirmed_solids", {})
     refs = knowledge.get("reference_shapes", [])
     if not isinstance(manual, dict) or not isinstance(refs, list):
-        raise ValueError("材料知识库数据类型无效")
+        raise TypeError("材料知识库数据类型无效")
     accepted_references: dict[str, dict] = {}
     for ref in refs:
         if not isinstance(ref, dict) or not ref.get("approved"):
             continue
         digest = ref.get("step_sha256")
         if not isinstance(digest, str):
-            raise ValueError("材料参考模型缺少 SHA256")
+            raise TypeError("材料参考模型缺少 SHA256")
         if digest in accepted_references and accepted_references[digest] != ref:
             raise ValueError("同一几何参考模型有冲突的确认信息")
         accepted_references[digest] = ref
