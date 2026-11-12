@@ -72,6 +72,7 @@ def build_catalog(folder: str | Path) -> dict:
         "unit": "mm",
         "source": manifest.get("source"),
         "source_sha256": manifest.get("source_sha256"),
+        "original_source_sha256": manifest.get("original_source_sha256"),
         "solid_count": len(records),
         "records": records,
     }
@@ -103,7 +104,8 @@ def load_catalog(folder: str | Path, *, verify_files: bool = True) -> dict:
             verify_files and expected_sha != sha256_file(_inside_folder(root, rec["step"]))
         ):
             raise ValueError(f"几何索引过期：{name}")
-    if catalog.get("source_sha256") != manifest.get("source_sha256"):
+    if (catalog.get("source_sha256") != manifest.get("source_sha256") or
+        catalog.get("original_source_sha256") != manifest.get("original_source_sha256")):
         raise ValueError("源工程的索引版本不匹配")
     return catalog
 
