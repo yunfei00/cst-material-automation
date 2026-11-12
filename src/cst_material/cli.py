@@ -16,6 +16,7 @@ from cst_material.p3_geometry import read_geometry_features
 from cst_material.p3_mtd_catalog import scan_mtd_library
 from cst_material.p3_neighbors import analyze_neighbors, read_spatial_report
 from cst_material.p3_spatial import query_spatial_from_copy, summarize_spatial
+from cst_material.p4_structure import build_structure_report
 
 
 def _report(path: Path, data: dict) -> None:
@@ -179,6 +180,18 @@ def _run_spatial_offline(args: argparse.Namespace, output: dict) -> None:
     output["stage"] = "P3-D 离线邻近分析完成"
 
 
+def _run_structure_preview(args: argparse.Namespace, output: dict) -> None:
+    """P4-A: merge local P3 reports, never touch CST or infer materials."""
+    output["stage"] = "P4-A 离线校验 P3-A/P3-C/P3-D 输入报告"
+    result = build_structure_report(
+        Path(args.geometry_report),
+        Path(args.spatial_report),
+        Path(args.neighbors_report) if args.neighbors_report else None,
+    )
+    output.update(result)
+    output["stage"] = "P4-A 结构类型候选分析完成"
+
+
 def _mapping(args: argparse.Namespace) -> dict[str, str]:
     result: dict[str, str] = {}
     if args.mapping:
@@ -264,6 +277,14 @@ def main(argv: list[str] | None = None) -> int:
     p3d.add_argument("--report", default="local-data/P3D_Neighbors_Report.json")
     p3d.add_argument("--neighbors", type=int, default=5, help="每个 Solid 最近的候选数量 0～20")
     p3d.add_argument("--batch-size", type=int, default=32, help="NumPy 单批处理 1～128 个 Solid")
+    p4a = commands.add_parser(
+        "structure-preview",
+        help="P4-A：读取本地几何和空间 JSON，输出结构类型候选（绝不猜材料）",
+    )
+    p4a.add_argument("--geometry-report", required=True, help="已通过的 P3-A 报告")
+    p4a.add_argument("--spatial-report", required=True, help="已通过的 P3-C 报告")
+    p4a.add_argument("--neighbors-report", help="可选已通过的 P3-D 离线报告")
+    p4a.add_argument("--report", default="local-data/P4A_Structure_Preview.json")
     args = parser.parse_args(argv)
     # A typo in --report must never overwrite an engineering project or MTD.
     # This also covers the P1/P2 report commands without altering workflows.
@@ -275,6 +296,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "spatial-offline" and report_file == Path(args.report_in).resolve():
         print("P3-D 输出报告不能覆盖输入 P3-C 报告", file=sys.stderr)
         return 2
+    if args.command == "structure-preview":
+        source_reports = [args.geometry_report, args.spatial_report]
+        if args.neighbors_report:
+            source_reports.append(args.neighbors_report)
+        if any(report_file == Path(path).resolve() for path in source_reports):
+            print("P4-A 输出路径不能覆盖任何 P3 原始报告", file=sys.stderr)
+            return 2
     if args.command == "scan-mtd":
         # Reject unsafe output *before* the generic error reporter writes a
         # FAIL JSON to the same path. Never write into an MTD library.
@@ -287,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
         source = args.library_root
     elif args.command == "spatial-offline":
         source = args.report_in
+    elif args.command == "structure-preview":
+        source = args.geometry_report
     else:
         source = args.source
     output: dict = {
@@ -305,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
             _run_spatial(args, output)
         elif args.command == "spatial-offline":
             _run_spatial_offline(args, output)
+        elif args.command == "structure-preview":
+            _run_structure_preview(args, output)
         else:
             _run_mtd_scan(Path(args.library_root), Path(args.report), output)
     except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
