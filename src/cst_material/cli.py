@@ -143,8 +143,10 @@ def _run_spatial(args: argparse.Namespace, output: dict) -> None:
     )
     if catalog.cleanup_deferred:
         output["warnings"] = [
-            "CST 可能仍占用临时工程：查询结果已读取，但临时文件清理未完成；"
-            "请先关闭该临时工程，再根据 cleanup_path 在本机人工清理。"
+            (
+                "CST 可能仍占用临时工程：查询结果已读取，但临时文件清理未完成；"
+                "请先关闭该临时工程，再根据 cleanup_path 在本机人工清理。"
+            )
         ]
     output["stage"] = "P3-C 空间查询完成"
 
