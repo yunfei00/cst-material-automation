@@ -237,9 +237,14 @@ def material_exists(project, material_name: str) -> bool:
             raise RuntimeError("CST VBA Material.Exists 未生成验证结果")
         encoding = "mbcs" if os.name == "nt" else "utf-8"
         result = result_file.read_text(encoding=encoding).strip().lower()
-        if result not in {"true", "false"}:
-            raise RuntimeError(f"材料存在性查询结果异常：{result!r}")
-        return result == "true"
+        # CST/VBA may report True as numeric -1 (VBA Boolean convention)
+        # or 1, and False as 0. Never treat arbitrary nonzero values as True:
+        # an unexpected return must still fail closed.
+        if result in {"true", "-1", "1"}:
+            return True
+        if result in {"false", "0"}:
+            return False
+        raise RuntimeError(f"材料存在性查询结果异常：{result!r}")
     finally:
         result_file.unlink(missing_ok=True)
 
