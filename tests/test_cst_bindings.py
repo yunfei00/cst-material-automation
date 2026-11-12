@@ -130,7 +130,18 @@ def test_vba_shape_catalog_rejects_partial_file(monkeypatch):
         read_shape_catalog(p)
 
 
-def test_material_exists_via_official_vba(monkeypatch):
+@pytest.mark.parametrize(
+    ("vba_value", "expected"),
+    [
+        ("True", True),
+        ("FALSE", False),
+        ("-1", True),  # CST 2025 SP1 observed VBA True result
+        ("0", False),
+        ("1", True),
+        (" false  ", False),
+    ],
+)
+def test_material_exists_via_official_vba(monkeypatch, vba_value, expected):
     p = FakeProject()
 
     def write_result(header, script):
@@ -140,10 +151,10 @@ def test_material_exists_via_official_vba(monkeypatch):
         match = re.match(r'Open "(.+)" For Output As #fh', path_line)
         assert match
         assert 'Material.Exists("Copper")' in script
-        Path(match.group(1)).write_text("True\n", encoding="utf-8")
+        Path(match.group(1)).write_text(vba_value + "\\n", encoding="utf-8")
 
     monkeypatch.setattr(p.model3d, "add_to_history", write_result)
-    assert material_exists(p, "Copper")
+    assert material_exists(p, "Copper") is expected
 
 
 def test_material_exists_rejects_invalid_query_result(monkeypatch):
