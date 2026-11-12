@@ -4,7 +4,12 @@ from __future__ import annotations
 import pytest
 
 from cst_material.material_matching import match_materials
-from cst_material.solid_recognition import recognize_catalog, shape_candidate
+from cst_material.solid_recognition import (
+    compare_reference_geometry,
+    recognize_catalog,
+    shape_candidate,
+    similar_reference_candidate,
+)
 
 
 def _catalog():
@@ -101,3 +106,39 @@ def test_m4_duplicate_reference_with_conflicting_label_rejected():
     }
     with pytest.raises(ValueError, match="冲突"):
         recognize_catalog(catalog, kb)
+
+
+def test_m4_approved_geometry_similarity_only_produces_candidate_not_material():
+    catalog = _catalog()
+    reference_features = dict(catalog["records"][0]["features"])
+    reference_features["volume_mm3"] = 3.2
+    reference_features["surface_mm2"] = 40
+    reference_features["face_count"] = 16
+    reference_features["dimensions_mm"] = [0.25, 2.0, 12.0]
+    # Real STEP exports need not have the exact same bytes as a sample.
+    kb = {
+        "schema_version": 1, "confirmed_solids": {}, "reference_shapes": [{
+            "approved": True, "step_sha256": "different-cad-bytes",
+            "part_type": "SPRING_CONTACT", "material": "Copper",
+            "material_approved": True, "features": reference_features,
+        }],
+    }
+    result = recognize_catalog(catalog, kb)
+    assert result[0]["status"] == "CANDIDATE"
+    assert result[0]["identity"] == "UNKNOWN"
+    assert result[0]["candidate"] == "SPRING_CONTACT"
+    assert result[0]["match_method"] == "APPROX_APPROVED_REFERENCE_FEATURES"
+    assert match_materials(catalog, result, kb)["assignments"] == {}
+
+
+def test_m4_ambiguous_reference_types_are_not_guessed():
+    feat = _catalog()["records"][0]["features"]
+    references = [
+        {"approved": True, "part_type": "SPRING_CONTACT", "features": feat},
+        {"approved": True, "part_type": "METAL_BRACKET", "features": feat},
+    ]
+    choice = similar_reference_candidate(feat, references)
+    assert choice["ambiguous"] is True
+    assert choice["candidate"] is None
+    assert compare_reference_geometry(feat, feat) == 1.0
+    assert compare_reference_geometry(feat, {"dimensions_mm": [1.0]}) is None
