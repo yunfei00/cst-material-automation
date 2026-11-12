@@ -11,8 +11,8 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --extra cad
       - name: Lint
         run: uv run ruff check .
       - name: Unit tests
-        run: uv run pytest -m "not cst_real"
+        run: uv run --extra cad pytest -m "not cst_real"
