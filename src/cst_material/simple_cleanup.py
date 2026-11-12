@@ -20,6 +20,7 @@ import traceback
 import warnings
 from pathlib import Path
 
+
 def _sha256_file(file: Path) -> str:
     checksum = hashlib.sha256()
     with file.open("rb") as stream:
@@ -271,7 +272,7 @@ def clean_project(
         if owned_env and env is not None:
             try:
                 env.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - CST vendor-specific exceptions
                 warnings.warn(
                     f"CST 接口关闭时报告异常：{exc}", RuntimeWarning, stacklevel=2
                 )
