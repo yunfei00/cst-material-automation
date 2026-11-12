@@ -130,7 +130,14 @@ def geometry_metrics(solids: list) -> dict:
                 else:
                     vertices += 1
                 ex.Next()
-    xyz = [float(v) for v in box.Get()]
+    # OCCT/OCP 8 changed Bnd_Box.Get() to an unbound Limits return type.
+    # CornerMin/CornerMax work on OCP 7.9 and 8.0.
+    corner_min = box.CornerMin()
+    corner_max = box.CornerMax()
+    xyz = [
+        corner_min.X(), corner_min.Y(), corner_min.Z(),
+        corner_max.X(), corner_max.Y(), corner_max.Z(),
+    ]
     if any(not math.isfinite(v) for v in xyz) or any(
         xyz[i] > xyz[i + 3] for i in range(3)
     ):
