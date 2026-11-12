@@ -271,11 +271,10 @@ def main(argv: list[str] | None = None) -> int:
     if report_file.suffix.casefold() in {".cst", ".mtd", ".sat", ".brd", ".step", ".stp"}:
         print("拒绝将 JSON 报告写入工程/材料文件路径", file=sys.stderr)
         return 2
-    if args.command == "spatial-offline":
-        # Prevent the JSON error reporter from overwriting the only source.
-        if report_file == Path(args.report_in).resolve():
-            print("P3-D 输出报告不能覆盖输入 P3-C 报告", file=sys.stderr)
-            return 2
+    # Prevent the JSON error reporter from overwriting the only source.
+    if args.command == "spatial-offline" and report_file == Path(args.report_in).resolve():
+        print("P3-D 输出报告不能覆盖输入 P3-C 报告", file=sys.stderr)
+        return 2
     if args.command == "scan-mtd":
         # Reject unsafe output *before* the generic error reporter writes a
         # FAIL JSON to the same path. Never write into an MTD library.
