@@ -16,3 +16,7 @@ jobs:
         run: uv run ruff check .
       - name: Unit tests
         run: uv run --extra cad pytest -m "not cst_real"
+      - name: Install optional PySide6/VTK viewer dependencies
+        run: uv sync --group dev --extra viewer
+      - name: Verify viewer imports on Windows
+        run: uv run --extra viewer python -c "import PySide6, pyvista, pyvistaqt; from cst_material.solid_viewer import launch_viewer; print('Viewer imports PASS')"
