@@ -1,7 +1,7 @@
 """CST 2025 3D project adapter.
 
-Python calls: cst.interface.Project.model3d.get_tree_items/add_to_history
-are documented in the supplied CST Python Libraries HTML help.
+Python calls use model3d.add_to_history, but never get_tree_items because
+some CST 2025 projects trigger a non-UTF-8 decoding error in that method.
 VBA Solid API method names and signatures are verified against the supplied\nCST 2025 Online Help / VBA_3D / Solid Object reference. The actual runtime\nbehavior still requires a real CST 2025 SP1 integration test.
 """
 from __future__ import annotations
@@ -14,29 +14,6 @@ from cst_material.cst_api import CSTBindings
 from cst_material.domain import Material, Solid
 
 
-def _tree_parts(value: str) -> tuple[str, ...]:
-    return tuple(part for part in value.replace("/", "\\").split("\\") if part)
-
-
-def _section_leaves(paths: list[str], section: str) -> list[tuple[str, ...]]:
-    all_parts = [_tree_parts(path) for path in paths]
-    candidates: set[tuple[str, ...]] = set()
-    for parts in all_parts:
-        positions = [i for i, part in enumerate(parts) if part.lower() == section.lower()]
-        if positions:
-            segment = parts[positions[0] :]
-            if len(segment) >= 2:
-                candidates.add(segment)
-    return sorted(
-        (
-            entry
-            for entry in candidates
-            if not any(len(other) > len(entry) and other[: len(entry)] == entry for other in candidates)
-        ),
-        key=lambda x: tuple(part.casefold() for part in x),
-    )
-
-
 def _modeler(project):
     model = project.model3d
     if model is None:
@@ -44,38 +21,30 @@ def _modeler(project):
     return model
 
 
-def _items(project) -> list[str]:
-    result = _modeler(project).get_tree_items()
-    if not isinstance(result, (list, tuple)):
-        raise TypeError("CST get_tree_items 未返回列表，不能安全识别模型")
-    return [str(item) for item in result]
-
-
 def read_solids(project) -> tuple[Solid, ...]:
-    parts_list = _section_leaves(_items(project), "Components")
-    solids = []
-    for parts in parts_list:
-        if len(parts) < 3:
-            continue
-        component = "/".join(parts[1:-1])
-        name = parts[-1]
-        full_name = name if ":" in name else f"{component}:{name}"
-        solids.append(Solid(full_name, component, None, None))
-    if not solids:
-        raise RuntimeError("未从 CST 工程树识别出 Solid。请查看诊断中的原始树路径，确认版本和路径结构")
-    if len({solid.identifier for solid in solids}) != len(solids):
-        raise RuntimeError("Solid 名称不唯一，拒绝继续，避免错误赋值")
-    return tuple(solids)
+    """Use VBA Solid enumeration to bypass get_tree_items() UTF-8 errors."""
+    catalog = read_shape_catalog(project)
+    if not catalog:
+        raise RuntimeError("CST VBA 未发现任何 Solid，请确认工程包含三维实体")
+    return tuple(
+        Solid(
+            identifier=name,
+            component=name.rpartition(":")[0] or None,
+            material=material or None,
+            bounds=None,
+        )
+        for name, material in catalog.items()
+    )
 
 
 def read_materials(project) -> tuple[Material, ...]:
-    entries = _section_leaves(_items(project), "Materials")
-    materials = tuple(Material(name=parts[-1]) for parts in entries)
-    if not materials:
-        raise RuntimeError("未从 CST 工程树识别出 Materials，拒绝进行材料赋值")
-    if len({mat.name for mat in materials}) != len(materials):
-        raise RuntimeError("材料名称重复，可能存在不同的材料子文件夹，拒绝自动解析")
-    return materials
+    """Read current-project materials directly via the documented VBA API."""
+    names = read_material_catalog(project)
+    if not names:
+        raise RuntimeError("CST 工程没有枚举到 Material，无法执行材料赋值")
+    if len(names) != len(set(names)):
+        raise RuntimeError("CST VBA 返回重复的材料名称，拒绝继续")
+    return tuple(Material(name=name) for name in names)
 
 
 def _vba_string(value: str) -> str:
@@ -189,6 +158,57 @@ def read_shape_catalog(project) -> dict[str, str]:
         return dict(zip(names, materials, strict=True))
     finally:
         result_file.unlink(missing_ok=True)
+
+
+def read_material_catalog(project) -> tuple[str, ...]:
+    """Return material names using official VBA Material.GetNumberOfMaterials.
+
+    VBA's Open...For Output uses the active Windows ANSI code page. Matching
+    Python's 'mbcs' avoids interpreting GBK/CP936 names as UTF-8.
+    """
+    fd, tmp = tempfile.mkstemp(prefix="cst_material_catalog_", suffix=".txt")
+    os.close(fd)
+    result_file = Path(tmp)
+    try:
+        result_file.unlink()
+        code = [
+            "Dim fh As Integer",
+            "Dim i As Long",
+            "Dim materialCount As Long",
+            "fh = FreeFile",
+            f"Open {_vba_string(str(result_file))} For Output As #fh",
+            "materialCount = Material.GetNumberOfMaterials",
+            "Print #fh, CStr(materialCount)",
+            "For i = 0 To materialCount - 1",
+            "Print #fh, Material.GetNameOfMaterialFromIndex(i)",
+            "Next i",
+            "Close #fh",
+        ]
+        _modeler(project).add_to_history(
+            "CST Material Automation: Read material catalog (discard history)",
+            "\n".join(code),
+        )
+        if not result_file.is_file():
+            raise RuntimeError("CST VBA 未生成材料清单文件")
+        encoding = "mbcs" if os.name == "nt" else "utf-8"
+        rows = result_file.read_text(encoding=encoding).splitlines()
+        if not rows:
+            raise RuntimeError("CST VBA 返回空材料清单文件")
+        try:
+            count = int(rows[0].strip())
+        except ValueError as exc:
+            raise RuntimeError("CST VBA 材料数量不是整数") from exc
+        names = rows[1:]
+        if count < 0 or len(names) != count:
+            raise RuntimeError(
+                f"CST 材料清单不完整：声明 {count}，实际读取 {len(names)}"
+            )
+        if any(not name for name in names):
+            raise RuntimeError("CST VBA 返回空材料名称")
+        return tuple(names)
+    finally:
+        result_file.unlink(missing_ok=True)
+
 
 
 def material_exists(project, material_name: str) -> bool:
