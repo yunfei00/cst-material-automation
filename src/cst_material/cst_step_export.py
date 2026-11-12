@@ -94,7 +94,7 @@ def export_cst_solids(
             stem = hashlib.sha256(name.encode("utf-8")).hexdigest()[:20]
             target = root / "steps" / f"{idx:06d}_{stem}.step"
             files.append((name, target))
-        if len(set(path for _, path in files)) != len(files):
+        if len({path for _, path in files}) != len(files):
             raise RuntimeError("导出文件名称碰撞")
         run_exporter = batch_exporter or _export_step_batch
         for offset in range(0, len(files), batch_size):
@@ -145,7 +145,7 @@ def export_cst_solids(
         if environment_owned and env is not None:
             try:
                 env.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - vendor-specific CST errors
                 warnings.warn(f"CST 环境关闭失败：{exc}", RuntimeWarning, stacklevel=2)
         try:
             shutil.rmtree(temp)
