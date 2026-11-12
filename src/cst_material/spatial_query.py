@@ -20,6 +20,8 @@ class OfflineSolidIndex:
     def __init__(self, folder: str | Path):
         self.root = Path(folder).resolve(strict=True)
         self.records = load_catalog(self.root, verify_files=False)["records"]
+        # Instance-local LRU avoids retaining every disposed index globally.
+        self._classifiers = lru_cache(maxsize=128)(self._load_classifiers)
         self.bounds = np.array(
             [r["features"]["bbox_mm"] for r in self.records],
             dtype=np.float64,
@@ -27,8 +29,7 @@ class OfflineSolidIndex:
         if not np.isfinite(self.bounds).all():
             raise ValueError("几何索引存在非有限包围盒")
 
-    @lru_cache(maxsize=128)
-    def _classifiers(self, idx: int):
+    def _load_classifiers(self, idx: int):
         from OCP.BRepClass3d import BRepClass3d_SolidClassifier
 
         entry = self.records[idx]
@@ -38,8 +39,8 @@ class OfflineSolidIndex:
         return tuple(BRepClass3d_SolidClassifier(solid) for solid in read_step(step))
 
     def classify(self, point: tuple[float, float, float], *, tolerance: float = 1e-6):
-        from OCP.TopAbs import TopAbs_IN, TopAbs_ON, TopAbs_OUT
         from OCP.gp import gp_Pnt
+        from OCP.TopAbs import TopAbs_IN, TopAbs_ON, TopAbs_OUT
 
         if len(point) != 3 or not all(math.isfinite(float(v)) for v in point):
             raise ValueError("三维点坐标必须为有限数值")
