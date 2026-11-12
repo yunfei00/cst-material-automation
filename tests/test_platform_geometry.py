@@ -10,14 +10,13 @@ OCP = pytest.importorskip("OCP")
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 from OCP.IFSelect import IFSelect_ReturnStatus
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
-from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
 from cst_material.occt_geometry import (
     analyze_step,
     classify_point,
-    export_preview_stl,
     read_step,
 )
 from cst_material.solid_index import (
