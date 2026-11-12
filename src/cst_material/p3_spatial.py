@@ -16,7 +16,9 @@ import os
 import shutil
 import subprocess
 import tempfile
-from dataclasses import asdict, dataclass
+import time
+import warnings
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from cst_material.cst_bindings import _vba_string
@@ -44,6 +46,8 @@ class SpatialCatalog:
     declared_solid_count: int
     features: tuple[SpatialFeature, ...]
     missing_bbox_count: int
+    cleanup_deferred: bool = False
+    cleanup_path: str | None = None
 
 
 def _number(value: str, what: str) -> float:
@@ -187,6 +191,8 @@ def summarize_spatial(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
         "length_unit_to_m": catalog.length_unit_to_m,
         "solid_count": catalog.declared_solid_count,
         "missing_bbox_count": catalog.missing_bbox_count,
+        "cleanup_deferred": catalog.cleanup_deferred,
+        "cleanup_path": catalog.cleanup_path,
         "bounds_type": "CST GetLooseBoundingBoxOfShape: non-tight AABB; upper extent, not exact geometry",
         "features": [
             {
@@ -286,11 +292,39 @@ try {
 """
 
 
-def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
-    """Use CST's OLE Project.RunScript as a non-history *experimental* bridge.
+def _cleanup_workdir(work: Path) -> bool:
+    """Best-effort cleanup after a CST COM query.
 
-    Always copy the .cst first; never save it, call History, or quit the user's
-    CST application. Fail closed if any COM/VBA output is incomplete.
+    A background CST process can still hold the copied .cst after the COM
+    PowerShell host terminates. Never let WinError 32 overwrite the real CST
+    query result or an earlier macro error. Never terminate CST.exe.
+    """
+    for attempt in range(4):
+        try:
+            shutil.rmtree(work)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError as exc:
+            if attempt == 3:
+                warnings.warn(
+                    f"P3-C 临时目录仍被占用，已保留供本机稍后清理：{work} "
+                    f"（{type(exc).__name__}: {exc}）。"
+                    "请确认 CST 已关闭该临时工程，再人工删除；不要终止其他 CST 工程。",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return False
+            time.sleep(0.25 * (attempt + 1))
+    return False
+
+
+def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
+    """Use CST's OLE Project.RunScript as a non-history experimental bridge.
+
+    Always copy the .cst first; never save it, call History, or quit the
+    global application. A locked temporary file must not hide the original
+    query failure or incorrectly produce a clean PASS.
     """
     if os.name != "nt":
         raise RuntimeError("P3-C OLE 仅支持已安装 CST 的 Windows 系统")
@@ -299,10 +333,20 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
     source = source.resolve(strict=True)
     if not source.is_file() or source.suffix.casefold() != ".cst":
         raise ValueError("P3-C 输入必须为已有 .cst 工程")
-    with tempfile.TemporaryDirectory(prefix="cst_p3_spatial_") as tmp:
-        work = Path(tmp)
+    # Do not use TemporaryDirectory: its context manager raises a second
+    # WinError 32 if CST still holds the copied project at exit.
+    work = Path(tempfile.mkdtemp(prefix="cst_p3_spatial_"))
+    catalog: SpatialCatalog | None = None
+    cleanup_ok = False
+    try:
         copied = work / source.name
-        shutil.copy2(source, copied)
+        try:
+            shutil.copy2(source, copied)
+        except PermissionError as exc:
+            raise RuntimeError(
+                "P3-C 复制源工程到临时目录时被 Windows 拒绝访问；"
+                "请确认原工程没有被其他进程独占，未尝试修改源工程"
+            ) from exc
         output = work / "spatial-result.txt"
         script = work / "spatial-query.bas"
         bridge = work / "run-spatial.ps1"
@@ -334,6 +378,20 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
                 "CST OLE RunScript 没有生成空间查询文件；请确认 RunScript "
                 "在当前 CST 2025 SP1 是非 History 命令宏，并查看 CST 消息窗口"
             )
-        # CST VBA Print # writes Windows ANSI/GBK on Chinese installations.
-        content = output.read_text(encoding="mbcs").splitlines()
-        return parse_spatial_data(content)
+        try:
+            content = output.read_text(encoding="mbcs").splitlines()
+        except PermissionError as exc:
+            raise RuntimeError(
+                "P3-C 读取宏输出文件时仍被 CST 占用；"
+                "可能是 VBA 未关闭输出文件或尚未执行完毕"
+            ) from exc
+        catalog = parse_spatial_data(content)
+    finally:
+        # This cleanup cannot raise, so it never masks a previous error.
+        cleanup_ok = _cleanup_workdir(work)
+    assert catalog is not None
+    if not cleanup_ok:
+        return replace(
+            catalog, cleanup_deferred=True, cleanup_path=str(work)
+        )
+    return catalog
