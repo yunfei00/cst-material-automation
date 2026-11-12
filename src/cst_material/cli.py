@@ -201,6 +201,14 @@ def main(argv: list[str] | None = None) -> int:
     p3b.add_argument("--library-root", required=True, help="外部材料库目录")
     p3b.add_argument("--report", default="local-data/P3B_MTD_Catalog.json")
     args = parser.parse_args(argv)
+    if args.command == "scan-mtd":
+        # Reject unsafe output *before* the generic error reporter writes a
+        # FAIL JSON to the same path. Never write into an MTD library.
+        library_root = Path(args.library_root).resolve()
+        report_file = Path(args.report).resolve()
+        if report_file.is_relative_to(library_root):
+            print("拒绝将报告写入材料库内部；请选择 local-data 目录", file=sys.stderr)
+            return 2
     source = args.library_root if args.command == "scan-mtd" else args.source
     output: dict = {
         "task": args.command,
