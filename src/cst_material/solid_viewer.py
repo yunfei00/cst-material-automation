@@ -7,7 +7,6 @@ Dependencies are imported at launch so batch Python remains headless.
 from __future__ import annotations
 
 import argparse
-import json
 import tempfile
 import time
 from pathlib import Path
@@ -28,7 +27,6 @@ def launch_viewer(path: str | Path) -> int:
         QApplication,
         QDoubleSpinBox,
         QFormLayout,
-        QHBoxLayout,
         QLabel,
         QLineEdit,
         QMainWindow,
@@ -144,7 +142,7 @@ def launch_viewer(path: str | Path) -> int:
                 self.statusBar().showMessage(
                     f"显示 {rec['solid_id']}：{time.perf_counter() - start:.3f}s"
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - GUI must show unexpected geometry errors
                 self.answer.setText(f"读取失败：{type(exc).__name__}: {exc}")
 
         def _display_step(self, file_path, rec, mesh_path=None):
