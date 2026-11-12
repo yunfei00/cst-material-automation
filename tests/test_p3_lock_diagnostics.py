@@ -1,6 +1,4 @@
 """P3-C WinError 32 root-cause telemetry regression tests (no company data)."""
-from pathlib import Path
-
 import pytest
 
 from cst_material import p3_lock_diagnostics, p3_spatial
