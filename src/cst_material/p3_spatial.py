@@ -282,8 +282,25 @@ try {
         try { $null = $project.Quit() } catch {
             Write-Warning "Could not close temporary CST project: $($_.Exception.Message)"
         }
+        try {
+            if ([System.Runtime.InteropServices.Marshal]::IsComObject($project)) {
+                [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($project)
+            }
+        } catch {
+            Write-Warning "Could not release temporary CST project COM reference: $($_.Exception.Message)"
+        }
     }
-    # Never quit CST DesignEnvironment: it may contain user-open projects.
+    # Release only this PowerShell process's COM wrappers. NEVER app.Quit:
+    # the global application might have the user's other CST projects.
+    if ($null -ne $app) {
+        try {
+            if ([System.Runtime.InteropServices.Marshal]::IsComObject($app)) {
+                [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)
+            }
+        } catch {
+            Write-Warning "Could not release CST application COM reference: $($_.Exception.Message)"
+        }
+    }
     $project = $null
     $app = $null
     [GC]::Collect()
