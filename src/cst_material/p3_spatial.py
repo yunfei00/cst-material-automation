@@ -405,6 +405,7 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
     catalog: SpatialCatalog | None = None
     cleanup_ok = False
     cleanup_diagnostics: dict = {}
+    status_file = work / "com-lifecycle-status.txt"
     try:
         copied = work / source.name
         try:
@@ -417,7 +418,6 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
         output = work / "spatial-result.txt"
         script = work / "spatial-query.bas"
         bridge = work / "run-spatial.ps1"
-        status_file = work / "com-lifecycle-status.txt"
         script.write_text(build_spatial_macro(output), encoding="mbcs")
         bridge.write_text(COM_RUNNER, encoding="utf-8-sig")
         env = dict(os.environ)
