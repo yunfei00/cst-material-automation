@@ -65,5 +65,5 @@ def test_scan_refuses_report_inside_material_library(tmp_path: Path):
     report = root / "report.json"
     assert cli.main(
         ["scan-mtd", "--library-root", str(root), "--report", str(report)]
-    ) == 1
+    ) == 2  # explicit safety refusal before any report is written
     assert not report.exists()
