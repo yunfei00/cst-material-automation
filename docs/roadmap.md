@@ -13,12 +13,12 @@
 - **证据：** 用户确认 P1 和 P2 在公司 CST 2025 SP1 实机 PASS；模拟 CI 仅用于回归。
 - 运行流程见 [P1/P2 中文说明](p1-p2-verification.md)。
 
-## P3（本分支：只读最小闭环，实机待验收）
+## P3（本分支：只读最小闭环，2026-11-12 用户确认实际执行通过）
 
 - **P3-A `geometry`**：提取体积、表面积、长度单位及 SI 换算和紧致度；只用已在官方帮助中查到的 `Solid.GetVolume` / `Solid.GetArea` / `Units.GetUnit` / `Units.GetGeometryUnitToSI`。
 - **限制：** 官方明确 `Solid.GetLooseBoundingBoxOfShape` 不能在 History/结构宏执行；当前 `add_to_history` 不能用于该接口。因此暂不实现包围盒、空间坐标、尺寸和邻接关系，不伪造特征。
 - **P3-B `scan-mtd`**：外部 MTD 材料库只读文件级索引（路径、候选名称、大小、时间、SHA256），不解析物性，不批量导入 CST。
-- [P3 使用与验收说明](p3-geometry-mtd-verification.md)。P3 真实 CST 集成行为尚待检验。
+- [P3 使用与验收说明](p3-geometry-mtd-verification.md)。**用户报告 P3-A、P3-B 均通过实际运行**；但现有几何输出只覆盖体积/表面积，MTD 扫描只覆盖文件元数据，不代表包围盒、空间特征、MTD 物性读取已通过。
 
 ## 后续阶段
 
