@@ -1,6 +1,6 @@
 # CST 2025 SP1 — P3-A / P3-B 验收说明
 
-> P1/P2 已于 2026-11-12 在真实 CST 2025 SP1 工程中通过。P3 新能力目前只通过模拟测试，必须单独实机验证。公司结构、材料名称、文件清单、几何数据和本机报告 **禁止上传 GitHub**。
+> P1/P2 已于 2026-11-12 在真实 CST 2025 SP1 工程中通过。**2026-11-12 用户反馈 P3-A 和 P3-B 全部运行通过**，已完成当前最小闭环的实际环境验证；新增几何/材料能力仍需另行验收。公司结构、材料名称、文件清单、几何数据和本机报告 **禁止上传 GitHub**。
 
 ## 范围与重要限制
 
@@ -51,7 +51,7 @@ Get-Content 'local-data\P3B_MTD_Catalog.json' -Encoding UTF8
 - `zero_volume`：体积为零的提醒，不应据此推断材料。
 - `geometry_scope`：明确没有包围盒、空间坐标与相互关系。
 
-**实机验收：** P3-A PASS，Solid 数量与 P1 一致；抽查几个简单几何体的体积、表面积、单位及换算数值；确认原始 CST 工程没有被修改。`Solid.GetVolume` / `Solid.GetArea` 虽有官方文档，但尚未在用户机器上实际执行；如报错，应检查本地 `stage` / `error`，不要绕开失败直接认为通过。
+**实机验收：** P3-A PASS，Solid 数量与 P1 一致；抽查几个简单几何体的体积、表面积、单位及换算数值；确认原始 CST 工程没有被修改。`Solid.GetVolume` / `Solid.GetArea` 已经在用户机器上完成 P3-A 命令实测（用户确认通过）。具体几何数值的抽样比对记录尚未提供，不能将所有模型的数值精度和特殊实体兼容性标记为全面验证。
 
 ## P3-B 输出与验收
 
@@ -65,7 +65,7 @@ Get-Content 'local-data\P3B_MTD_Catalog.json' -Encoding UTF8
 ## 维护与后续
 
 - 本次仅新增独立 CLI 命令和本地数据结构，不修改已经实机验证通过的 P1/P2 业务逻辑。
-- 无 CST 的 GitHub CI 只验证模拟操作、数据校验和安全边界。P3 仍需真实 CST 2025 SP1 验证。
+- 无 CST 的 GitHub CI 只验证模拟操作、数据校验和安全边界；P3-A/P3-B 已经由用户确认实际运行通过。未获取可公开的详细样本核对记录，因此不将全部材料内容、物性或几何精度当作已验证。
 - 后续先单独验证**非 History 环境**的几何包围盒调用，再增加位置、尺寸、厚度、邻接等 P3-A 特征；P3-B 后续经人工确认或官方 API 读取材料物性后，再进入 P4 可解释匹配。
 
 **参考：** CST 2025 Online Help 中 `VBA_3D/common_vbasolido/common_vbasolido_solid_object.htm`、`VBA_3D/common_vbaunitso/common_vbaunitso_units_object.htm`，以及 Python Libraries `cst.interface.Model3D.add_to_history`。
