@@ -6,8 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cst_material import cli
-from cst_material import p3_spatial
+from cst_material import cli, p3_spatial
 from cst_material.p3_spatial import COM_RUNNER, MARKER
 
 
@@ -34,13 +33,13 @@ def test_com_probe_uses_disposable_copy_without_overwriting_source(tmp_path, mon
         assert "GetLooseBoundingBoxOfShape" in script.read_text(encoding="mbcs")
         assert "powershell.exe" == cmd[0]
         assert kwargs["timeout"] == 240
+        sample_rows = [
+            MARKER, "mm", "0.001", "1",
+            "main:solid_1", "Copper", "OK",
+            "-1", "2", "1", "6", "0", "10",
+        ]
         (copy.parent / "spatial-result.txt").write_text(
-            "\n".join([
-                MARKER, "mm", "0.001", "1",
-                "main:solid_1", "Copper", "OK",
-                "-1", "2", "1", "6", "0", "10",
-            ]) + "\n",
-            encoding="mbcs",
+            "\n".join(sample_rows) + "\n", encoding="mbcs"
         )
         called.append(copy)
         return SimpleNamespace(returncode=0, stderr="", stdout="")
