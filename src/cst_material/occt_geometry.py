@@ -43,7 +43,8 @@ def read_step(path: str | Path) -> list:
     explorer = TopExp_Explorer(reader.OneShape(), TopAbs_SOLID)
     solids = []
     while explorer.More():
-        solid = TopoDS.Solid_s(explorer.Current())
+        downcast_solid = getattr(TopoDS, "Solid_s", None) or TopoDS.Solid
+        solid = downcast_solid(explorer.Current())
         # The TopoDS_Shape.Closed() flag may be False for a valid STEP-imported
         # B-rep solid. It is NOT a reliable closure test after STEP transfer.
         if solid.IsNull() or not BRepCheck_Analyzer(solid).IsValid():
@@ -120,7 +121,9 @@ def geometry_metrics(solids: list) -> dict:
             while ex.More():
                 if typ == TopAbs_FACE:
                     faces += 1
-                    name = str(BRepAdaptor_Surface(TopoDS.Face_s(ex.Current())).GetType())
+                    name = str(BRepAdaptor_Surface(
+                        (getattr(TopoDS, "Face_s", None) or TopoDS.Face)(ex.Current())
+                    ).GetType())
                     kinds[name.rsplit(".", 1)[-1]] += 1
                 elif typ == TopAbs_EDGE:
                     edges += 1
