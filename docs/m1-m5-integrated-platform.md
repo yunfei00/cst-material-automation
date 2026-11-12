@@ -80,6 +80,7 @@ M3 的单 Solid STEP VBA 导出仍是**有文档依据的实现候选**，没有
   "confirmed_solids": {
     "component1:spring_001": {
       "approved": true,
+      "source_sha256": "SHA256_OF_ORIGINAL_CST_FROM_CATALOG",
       "part_type": "SPRING_CONTACT",
       "material_approved": true,
       "material": "ApprovedMaterialAlreadyInCST"
@@ -99,7 +100,8 @@ M3 的单 Solid STEP VBA 导出仍是**有文档依据的实现候选**，没有
 
 - 左侧列表可搜索完整 Solid ID/Component；选中某一件才打开对应精确 STEP 并生成显示用 STL。
 - 中间为 VTK 三维预览，支持鼠标旋转、缩放、平移、点击高亮；重置视角。
-- 右侧查看体积、表面积、面/边和尺寸；输入 XYZ 查询 `INSIDE / ON_BOUNDARY / OUTSIDE`，并在三维场景上标点。
+- 右侧查看体积、表面积、面/边、尺寸、身份候选与证据；输入 XYZ 查询 `INSIDE / ON_BOUNDARY / OUTSIDE`，并在三维场景上标点。
+- 工程师填写真实零件类别后点击**保存本机确认结果**；只有另外明确勾选“材料已核实”，才会在本地知识库中允许对应材料被自动赋值。GUI 自动绑定源 CST 指纹，数据保存在本机用户目录。
 - STEP 是精确几何；显示 STL 只做预览，不用它判断真实物体内部。
 - 7,000 Solid 场景采用索引+按需渲染，不一次加载 7,000 个 VTK Actor；但性能仍需公司实机测量。
 
