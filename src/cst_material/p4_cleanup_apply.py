@@ -11,6 +11,8 @@ meshes, boundaries or materials: it removes only the planned exact Solid IDs.
 from __future__ import annotations
 
 import shutil
+import tempfile
+import warnings
 from pathlib import Path
 
 from cst_material.p4_cleanup import (
@@ -30,10 +32,17 @@ def _delete_solids(project, ids: list[str], batch_size: int = 20) -> None:
     for start in range(0, len(ids), batch_size):
         group = ids[start:start + batch_size]
         code = "\n".join(f"Solid.Delete {_vba_string(name)}" for name in group)
-        _modeler(project).add_to_history(
-            f"CST cleanup R001 + explicit {start + 1}-{start + len(group)}",
-            code,
-        )
+        try:
+            _modeler(project).add_to_history(
+                f"CST cleanup R001 + explicit {start + 1}-{start + len(group)}",
+                code,
+            )
+        except Exception as exc:  # noqa: BLE001 - vendor-specific CST errors
+            raise RuntimeError(
+                f"CST R001 删除批次 {start + 1}～{start + len(group)} 失败，"
+                f"全部计划 {len(ids)} 个 Solid；副本尚未通过验收"
+            ) from exc
+        print(f"P4-C R001 删除进度：{start + len(group)}/{len(ids)}", flush=True)
 
 
 def apply_cleanup_plan(
@@ -73,12 +82,16 @@ def apply_cleanup_plan(
     env = environment if environment is not None else connect()
     owned_env = environment is None
     project = None
+    # CST may release a closed project's Windows file handles asynchronously.
+    # Read the preflight catalog from a disposable copy *separate* from the
+    # eventual output. This avoids overwriting a CST-locked .cst file.
+    preflight_dir = Path(tempfile.mkdtemp(prefix="cst_cleanup_preflight_"))
+    preflight = preflight_dir / original.name
+    cleanup_diagnostics: dict = {}
+    result: dict | None = None
     try:
-        # Use exclusive creation to avoid a TOCTOU overwrite on output.
-        with original.open("rb") as src, dest.open("xb") as target:
-            shutil.copyfileobj(src, target, length=4 * 1024 * 1024)
-        # Preflight: read real CST IDs/materials, NOT only the JSON names.
-        project = env.open_project(str(dest))
+        shutil.copy2(original, preflight)
+        project = env.open_project(str(preflight))
         try:
             before = {name: material or None for name, material in reader(project).items()}
         finally:
@@ -90,11 +103,14 @@ def apply_cleanup_plan(
             raise RuntimeError("CST 实际 Solid/材料清单与 P1 不一致，不执行删除")
         if not set(selected) <= before.keys():
             raise RuntimeError("删除列表引用了当前 CST 中不存在的实体")
-        # The preflight VBA enumeration created temporary query History.
-        # Discard it by reopening a clean, copied source before any edits.
         if _sha256_file(original) != plan.get("source_sha256"):
             raise RuntimeError("处理期间源工程发生变化，停止删除")
-        shutil.copy2(original, dest)
+
+        # Only create the final deliverable after preflight passes.
+        # Exclusive creation makes it impossible to overwrite an existing file.
+        with original.open("rb") as src, dest.open("xb") as target:
+            shutil.copyfileobj(src, target, length=4 * 1024 * 1024)
+        print(f"P4-C 新工程副本已创建：{dest}", flush=True)
         project = env.open_project(str(dest))
         remove(project, selected, batch_size=batch_size)
         project.save(str(dest), allow_overwrite=True)
@@ -115,7 +131,7 @@ def apply_cleanup_plan(
                 f"误删={missing[:5]}，未删除={not_deleted[:5]}，"
                 f"材料变化={changed[:5]}；不标记 PASS"
             )
-        return {
+        result = {
             "task": "cleanup-apply",
             "status": "PASS",
             "stage": "CST 工程副本删除完成，剩余 Solid 和材料逐项回读一致",
@@ -133,7 +149,25 @@ def apply_cleanup_plan(
             ),
         }
     finally:
+        # Cleanup failures must never conceal a more important VBA/COM error.
         if project is not None:
-            project.close()
+            try:
+                project.close()
+            except Exception as exc:  # noqa: BLE001 - CST vendor exception
+                warnings.warn(f"P4-C 关闭临时 CST 工程失败：{exc}", RuntimeWarning, stacklevel=2)
         if owned_env:
-            env.close()
+            try:
+                env.close()
+            except Exception as exc:  # noqa: BLE001 - CST vendor exception
+                warnings.warn(f"P4-C 关闭 CST 接口失败：{exc}", RuntimeWarning, stacklevel=2)
+        from cst_material.p3_spatial import _cleanup_workdir
+
+        cleaned = _cleanup_workdir(preflight_dir, cleanup_diagnostics)
+        if result is not None:
+            result["preflight_cleanup_deferred"] = not cleaned
+            result["preflight_cleanup_diagnostics"] = cleanup_diagnostics
+            if not cleaned:
+                result["status"] = "PARTIAL"
+                result["preflight_cleanup_path"] = str(preflight_dir)
+    assert result is not None
+    return result
