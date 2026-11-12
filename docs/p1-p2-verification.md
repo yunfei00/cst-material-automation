@@ -4,12 +4,12 @@
 
 ## 开发状态（务必先看）
 
-- 已对照用户上传的 CST Python Libraries HTML 手册，实现 Python API 入口、工程树读取、保存和重新打开。
-- P1：`inventory` 命令读取已有工程的 Component/Solid/Material，并尝试查询每个 Solid 当前的材料。
+- 已对照用户上传的 CST Python Libraries HTML 手册和 CST VBA_3D 手册，实现 Python 连接、VBA 实体与材料枚举、保存和重新打开。**由于实际工程触发 `get_tree_items()` 的 UTF-8 解码错误，P1/P2 已绕开该 Python 工程树接口。**
+- P1：`inventory` 通过 VBA `Solid.GetNumberOfShapes`、`Solid.GetNameOfShapeFromIndex`、`Solid.GetMaterialNameForShape` 和 `Material.GetNumberOfMaterials`、`Material.GetNameOfMaterialFromIndex` 读取当前工程 Solid、Component 与 Material，不再使用 `get_tree_items()`。
 - P2：`assign` 命令根据指定的 Solid → 已有材料名称，复制原工程；**在真正赋值前额外执行 `Solid.GetNameOfShapeFromIndex` 实体清单核对及 `Material.Exists` 材料存在性校验**，校验通过后才修改副本、保存并重新打开检查。
 - **官方文档已齐全，尚未在真正 CST 2025 SP1 上运行**。上传的 `Online Help.zip` 中 `mergedProjects/VBA_3D/common_vbasolido/common_vbasolido_solid_object.htm` 正式定义了 `Solid.GetNumberOfShapes`、`GetNameOfShapeFromIndex`、`GetMaterialNameForShape` 和 `ChangeMaterial`；`special_vbalayer/special_vbalayerolayer_object.htm` 定义了 `Material.Exists`。接口名与参数已核实；执行行为仍需实机验收，CI 模拟测试不能代替实机成功。
 - 第一次请在**非生产的测试 CST 工程**上运行，以核实树路径形式、VBA 文件查询是否可用、材料名称是否需要完整路径。
-- P1 从 `model3d.get_tree_items()` 提取 `Components`、`Materials`，再通过官方 VBA 的 `Solid.GetNumberOfShapes` 与 `GetNameOfShapeFromIndex` 核对真正的 Solid 集合，避免误将树叶子节点视为实体。若两者不一致，报告 `PARTIAL` 并列出差异；不隐瞒错误。
+- P1 直接从官方 VBA 枚举得到 Solid 与 Material 列表；不会把树叶子节点误认为 Solid。VBA 枚举失败、缺失、数量不符时明确返回 `FAIL`，不写入伪造列表。
 
 ## 准备运行（PowerShell，同一代码块）
 
@@ -48,7 +48,7 @@ Get-Content 'local-data/P2_Report.json' -Encoding UTF8
 
 ## JSON 报告和验收条件
 
-- P1：`solid_count`、`material_count`、`solids`、`materials`、`tree_items` 和 `vba_solid_count`，供本机核查。实体没有赋材时 `material` 可为空；官方 VBA 实体枚举与工程树不一致、或 VBA 查询失败时状态 `PARTIAL`，保留已读取内容和异常原因。
+- P1：`solid_count`、`material_count`、`solids`、`materials`、`vba_solid_count`，并将 `inventory_source` 标为 VBA。Solid 的 `material` 从官方 VBA 获取；枚举失败时记录 `FAIL`、`stage` 和 `traceback`。不再输出 `tree_items`。
 - P2：只有成功保存副本、关闭、重新打开，并且对应 Solid 的材料名与期望一致，才标记 `PASS`。
 - 任意错误报告为 `FAIL` 并返回非零退出码。**即使失败，目标副本也可能保留部分变化，不应作为生产工程使用；原工程不被修改。**
 - P2 拒绝覆盖存在的目标文件，拒绝将原工程作为目标，拒绝找不到的 Solid 或材料名；若官方 VBA 枚举中不存在目标实体、`Material.Exists` 返回 False，也拒绝赋值。
@@ -73,11 +73,11 @@ Get-Content 'local-data/P2_Report.json' -Encoding UTF8
 
 **本项目已在本地报告记录失败阶段、traceback 和非法字节。** 打开 `local-data/P1_Report.json`，重点查看：
 
-- `stage`：错误发生在复制工程、连接 CST、打开项目、`get_tree_items`、还是 VBA 查询。
+- `stage`：错误发生在复制工程、连接 CST、打开项目、VBA 枚举 Solid/Material，还是 P2 赋值。
 - `encoding_error.invalid_bytes_hex`：精确非法字节（例如 `b2`）；`start` / `end`：错误字节范围。
 - `traceback`：确切的 Python 报错调用位置。
 
-如果报错在 `CST Python 读取 get_tree_items 工程树`，说明异常可能来自 CST Python 包内部的字符串/工程树解码。更换我们 JSON 报告的 `encoding` 无效。应先确认 CST Python 版本、工程中是否存在非 UTF-8 的中文名称，再针对接口做兼容处理。
+**2026-11-12 已修复该调用路径：** P1/P2 改为使用官方 VBA API 枚举 Solid/Material，绕开 `get_tree_items()` 内部的 UTF-8 解码。VBA 输出按 Windows 活动 ANSI 代码页（Python `mbcs`）读取，以兼容常见 GBK/CP936 工程名称。此变更已通过模拟单元测试，仍需用原 CST 工程实测。如果升级后仍出现编码异常，请查看新的 `stage` 判断是 `add_to_history`/VBA 输出，还是其他调用；不要继续改原工程编码。
 
 如果报错在 `读取 Solid→Material 映射`，则 `--mapping` 对应 JSON 文件可能是 GBK/ANSI 编码；请用编辑器将该**JSON 映射文件**另存为 UTF-8，工程文件不需要改动。
 
