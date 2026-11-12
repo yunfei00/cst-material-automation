@@ -25,7 +25,7 @@ SUPPORTED_UNITS = {"nm", "um", "mm", "cm", "m", "mil", "in", "ft"}
 
 def _number(value: object, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{label} 必须是数值")
+        raise TypeError(f"{label} 必须是数值")
     result = float(value)
     if not math.isfinite(result):
         raise ValueError(f"{label} 必须为有限数值")
@@ -48,7 +48,7 @@ def read_spatial_report(path: Path) -> tuple[SpatialCatalog, dict]:
         raise ValueError("P3-C 原始查询失败；不能利用不完整数据计算邻近关系")
     data = raw.get("spatial")
     if not isinstance(data, dict):
-        raise ValueError("P3-C 报告没有空间查询结果")
+        raise TypeError("P3-C 报告没有空间查询结果")
     count = data.get("solid_count")
     features = data.get("features")
     if (
@@ -75,7 +75,7 @@ def read_spatial_report(path: Path) -> tuple[SpatialCatalog, dict]:
     missing = 0
     for record in features:
         if not isinstance(record, dict):
-            raise ValueError("P3-C Solid 特征记录必须是对象")
+            raise TypeError("P3-C Solid 特征记录必须是对象")
         name = record.get("identifier")
         if not isinstance(name, str) or not name or name in names:
             raise ValueError("P3-C Solid 标识为空或有重复")
