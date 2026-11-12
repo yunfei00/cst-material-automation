@@ -32,7 +32,7 @@ class FakeModel:
         assert 'Units.GetUnit("Length")' in script
         assert "Units.GetGeometryUnitToSI" in script
         assert "GetLooseBoundingBoxOfShape" not in script
-        match = re.search(r'^Open "(.+)" For Output As #fh$', script, flags=re.M)
+        match = re.search(r'^Open "(.+)" For Output As #fh$', script, flags=re.MULTILINE)
         assert match
         Path(match.group(1)).write_text(self.values, encoding="ascii")
 
