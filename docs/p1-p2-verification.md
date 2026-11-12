@@ -62,6 +62,29 @@ Get-Content 'local-data/P2_Report.json' -Encoding UTF8
 - 不上传 CST、几何结构、材料清单、公司路径、日志或任何设计数据到个人 GitHub。
 - 真实 CST 验证通过之前，不将 P1/P2 标记为已完成真实业务验收。
 
+
+## Windows 中文乱码 / UnicodeDecodeError 排查
+
+如果执行 P1 时遇到：
+
+`UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb2 in position 154: invalid start byte`
+
+含义是某处字节被当成 UTF-8，但 `0xB2` 不符合该位置的 UTF-8 规则。这**可能**是 GBK/CP936 编码的中文名称（例如汉字“材”的 GBK 编码以 `B2` 开头），不能只凭这一字节就确定是哪一份数据。
+
+**本项目已在本地报告记录失败阶段、traceback 和非法字节。** 打开 `local-data/P1_Report.json`，重点查看：
+
+- `stage`：错误发生在复制工程、连接 CST、打开项目、`get_tree_items`、还是 VBA 查询。
+- `encoding_error.invalid_bytes_hex`：精确非法字节（例如 `b2`）；`start` / `end`：错误字节范围。
+- `traceback`：确切的 Python 报错调用位置。
+
+如果报错在 `CST Python 读取 get_tree_items 工程树`，说明异常可能来自 CST Python 包内部的字符串/工程树解码。更换我们 JSON 报告的 `encoding` 无效。应先确认 CST Python 版本、工程中是否存在非 UTF-8 的中文名称，再针对接口做兼容处理。
+
+如果报错在 `读取 Solid→Material 映射`，则 `--mapping` 对应 JSON 文件可能是 GBK/ANSI 编码；请用编辑器将该**JSON 映射文件**另存为 UTF-8，工程文件不需要改动。
+
+**不要**对 `.cst` 工程二进制文件做 `decode('gbk')`、`decode('utf-8')`，也不要使用 `errors='ignore'` 丢弃材料/结构名称。
+
+安全提醒：`traceback` 可能包含公司路径和局部工程信息，只能保存在被 Git 忽略的本地目录。需要共享诊断时只分享脱敏的阶段名、报错类型和非敏感代码行。
+
 ## 开发者单元测试（不需要 CST）
 
 ```powershell
