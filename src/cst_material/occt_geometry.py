@@ -54,8 +54,8 @@ def read_step(path: str | Path) -> list:
 def classify_point(solids: list, point: tuple[float, float, float], tolerance: float = 1e-6):
     """Return INSIDE, ON_BOUNDARY, or OUTSIDE for a possibly multi-body shape."""
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-    from OCP.TopAbs import TopAbs_IN, TopAbs_ON, TopAbs_OUT
     from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN, TopAbs_ON, TopAbs_OUT
 
     if len(point) != 3 or not all(math.isfinite(float(v)) for v in point):
         raise ValueError("坐标必须为三个有限数值")
@@ -80,10 +80,10 @@ def classify_point(solids: list, point: tuple[float, float, float], tolerance: f
 
 def geometry_metrics(solids: list) -> dict:
     """Exact B-rep metrics; bbox limits can include OCCT tolerance padding."""
+    from OCP.Bnd import Bnd_Box
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepBndLib import BRepBndLib
     from OCP.BRepGProp import BRepGProp
-    from OCP.Bnd import Bnd_Box
     from OCP.GProp import GProp_GProps
     from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_VERTEX
     from OCP.TopExp import TopExp_Explorer
@@ -142,7 +142,7 @@ def export_preview_stl(solids: list, output: str | Path, *, deflection: float = 
     """Tessellate B-rep and export render-only STL; do not reuse for geometry."""
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.StlAPI import StlAPI_Writer
-    from OCP.TopoDS import TopoDS_Compound, TopoDS_Builder
+    from OCP.TopoDS import TopoDS_Builder, TopoDS_Compound
 
     if not solids:
         raise ValueError("没有 Solid 可渲染")
