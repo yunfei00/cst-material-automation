@@ -103,3 +103,31 @@ CLI 只输出摘要，详情留在本机 JSON；**即使没有其他规则文件
 3. 在**新工程副本**中调用 `Solid.Delete`，保存后重新打开，对所有剩余 Solid ID 与材料逐项核对；原工程绝不覆盖。
 4. 如失败，不报告 PASS；副本可能保留供本机排查。**CI 模拟验收不能代替真实 CST 实机验证**。
 5. 实机首次验证可先使用非生产工程，核对删除前后视图和端口/仿真设置；这不改变已确认的 R001 判断条件。
+
+
+## 6. 一键执行真实 CST 删除（推荐）
+
+本机执行一次命令：从 P3-A `geometry` 报告自动获得源工程路径，再使用 P1 `inventory` 和 P3-A 校验并生成删除计划；然后**真实删除**全部 V=0 的 Solid，保存新 CST 副本、重新打开核对所有剩余 Solid 和 Material。该操作并非只生成报告。
+
+```powershell
+$ErrorActionPreference = 'Stop'
+git fetch origin
+if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
+git switch feat/cst-p4-structure-cleanup
+if ($LASTEXITCODE -ne 0) { throw '切换分支失败' }
+git pull --ff-only origin feat/cst-p4-structure-cleanup
+if ($LASTEXITCODE -ne 0) { throw '更新分支失败' }
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\cleanup_r001.ps1
+if ($LASTEXITCODE -ne 0) { throw 'CST 删除或回读验收失败，请检查 local-data 报告' }
+```
+
+- 默认读取 `local-data\P1_Report.json` 与 `local-data\P3A_Geometry_Report.json`；如名称不同，可通过 `-InventoryReport`、`-GeometryReport` 参数指定。
+- 默认每批执行 50 个 `Solid.Delete`，控制台实时打印批次进度。脚本处理完前不要关闭正在操作该副本的 CST。
+- 新工程输出到**源工程同级目录**，命名 `原工程名_R001_Cleaned_时间戳.cst`；不覆盖原工程。`local-data/` 中分别留存清理计划和执行报告。
+- 预检使用单独的临时 CST 副本，避免已知 `WinError 32`：CST 已关闭的项目文件句柄释放可能有延迟，不能马上覆盖同一个文件。
+- 任意一步失败都不是 PASS，**不要使用未完成的副本进行仿真**；可能保留部分输出用于本机诊断。若预检临时文件清理失败，返回 PARTIAL 并记录诊断，不宣称完全成功。
+
+**真实执行验收：** `Status=PASS`、`DeletedZeroVolumeSolidCount` 等于 P3-A 中所有精确 `V=0` 的 Solid 数、`RemainingSolidCount` 等于原数量减去删除数量、`RemainingMaterialsUnchanged=True`。
+
+**限制：** 即使回读 PASS，也只证明 Solid 与已有 Material 一致；模型端口、激励、边界、网格和求解有效性仍需在新工程确认。是否改善旋转/缩放卡顿，必须实际打开新副本比较。公司工程和本地报告不上传公共 GitHub。
