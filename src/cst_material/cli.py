@@ -201,6 +201,12 @@ def main(argv: list[str] | None = None) -> int:
     p3b.add_argument("--library-root", required=True, help="外部材料库目录")
     p3b.add_argument("--report", default="local-data/P3B_MTD_Catalog.json")
     args = parser.parse_args(argv)
+    # A typo in --report must never overwrite an engineering project or MTD.
+    # This also covers the P1/P2 report commands without altering workflows.
+    report_file = Path(args.report).resolve()
+    if report_file.suffix.casefold() in {".cst", ".mtd", ".sat", ".brd", ".step", ".stp"}:
+        print("拒绝将 JSON 报告写入工程/材料文件路径", file=sys.stderr)
+        return 2
     if args.command == "scan-mtd":
         # Reject unsafe output *before* the generic error reporter writes a
         # FAIL JSON to the same path. Never write into an MTD library.
