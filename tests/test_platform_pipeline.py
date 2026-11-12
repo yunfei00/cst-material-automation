@@ -122,10 +122,13 @@ def test_m5_two_path_pipeline_outputs_review_state_when_identity_unknown(
 def test_m5_two_path_pipeline_applies_only_verified_materials(tmp_path, monkeypatch):
     source, output = _sample_pipeline_fakes(tmp_path, monkeypatch)
     knowledge = tmp_path / "approved_knowledge.json"
+    from cst_material.occt_geometry import sha256_file
+
     knowledge.write_text(json.dumps({
         "schema_version": 1, "confirmed_solids": {
             "main:remaining": {
-                "approved": True, "material_approved": True,
+                "approved": True, "source_sha256": sha256_file(source),
+                "material_approved": True,
                 "part_type": "USB_CONNECTOR_HOUSING",
                 "material": "PEC",
             },
