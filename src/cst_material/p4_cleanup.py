@@ -1,9 +1,8 @@
-"""Explicit-rule, fail-closed CST structure cleanup planner and copy-only executor.
+"""CST structure cleanup: deterministic zero-volume rule plus explicit IDs.
 
-The original engineering project is NEVER modified. Name hints are REVIEW-only.
-No implicit deletion based on USB/headphone jack/motor/front camera names.
-Only complete, engineer-confirmed Solid IDs and complete explicit variant groups
-are eligible for the deletion plan.
+Confirmed rule R001: ALL P3-A solids with an exactly zero measured volume are
+selected for deletion, independent of area, name, component or existing material.
+The planner does not modify CST. Remaining name hints stay REVIEW-only.
 """
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 RULE_VERSION = 1
-MAX_DELETE_PER_APPLY = 100
+MAX_DELETE_PER_APPLY = 12000
 REVIEW_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("辅助建模候选", ("辅助", "aux_", "auxiliary", "construction", "建模辅助")),
     ("参考/基准候选", ("基准", "参考线", "参考面", "datum", "reference_geometry")),
@@ -98,13 +97,15 @@ def build_cleanup_plan(
     source: Path, inventory: Path, rules_path: Path | None = None,
     geometry_report: Path | None = None,
 ) -> dict:
-    """Build immutable explicit-ID decisions, plus non-actionable name hints."""
+    """R001 selects all V=0 P3-A solids; other rules require explicit IDs."""
     original = source.resolve(strict=True)
     if not original.is_file() or original.suffix.casefold() != ".cst":
         raise ValueError("输入必须是现有 .cst 工程")
     rows, report_source = read_p1_inventory(inventory)
     if not _source_identity(str(original), report_source):
         raise ValueError("P1 inventory 来源工程路径与本次源 .cst 不一致")
+    if geometry_report is None:
+        raise ValueError("规则 R001 必须提供通过的 P3-A geometry 报告，不能遗漏零体积实体")
 
     rules = _load_json(rules_path) if rules_path is not None else {
         "schema_version": RULE_VERSION,
@@ -155,16 +156,8 @@ def build_cleanup_plan(
         })
     if protected & variants:
         raise ValueError("受保护 Solid 不能被变体组删除")
-    delete = confirmed | variants
-    if not delete:
-        note = "当前无已确认删除项：只生成待人工检查的提示，未修改工程"
-    else:
-        note = "只包含明确 ID 和完整变体组选中的 Solid；仍需复核再在副本执行"
-    if len(delete) >= len(rows):
-        raise ValueError("拒绝清空所有 Solid")
-    # The exported P3-A volume/area can identify review priorities, NOT
-    # physical objects to delete. In EM simulation a zero-volume sheet may
-    # carry an essential PEC/conductive boundary or excitation.
+    # R001 below joins explicit and variant deletions after checking the full
+    # P3-A catalog. Do not construct a delete list from names/areas.
     zero_volume: dict[str, dict] = {}
     if geometry_report is not None:
         geo = _load_json(geometry_report)
@@ -213,8 +206,31 @@ def build_cleanup_plan(
                     "volume_project_unit3": volume,
                     "area_project_unit2": area,
                     "zero_volume_review_class": category,
-                    "decision": "REVIEW_ONLY_NEVER_AUTO_DELETE",
+                    "decision": "DELETE_RULE_R001_ZERO_VOLUME",
                 }
+    # R001 is user-approved and unconditional: A>0 and A=0 both qualify.
+    zero_ids = set(zero_volume)
+    if protected & zero_ids:
+        raise ValueError("R001 零体积删除规则与 protected_ids 冲突")
+    if variant_keeps & zero_ids:
+        raise ValueError("R001 零体积删除规则与变体保留项 keep 冲突")
+    delete = confirmed | variants | zero_ids
+    if len(delete) >= len(rows):
+        raise ValueError("规则会删除全部 Solid：拒绝生成空工程方案")
+    note = (
+        "R001：所有 P3-A 测得 V=0 的 Solid 均列入删除清单；"
+        "其他删除仍只接受明确 ID/变体组。仅生成计划，尚未修改工程。"
+    )
+    delete_reasons = {
+        name: (
+            ["R001_ZERO_VOLUME"] if name in zero_ids else []
+        ) + (
+            ["EXPLICIT_ID"] if name in confirmed else []
+        ) + (
+            ["VARIANT_NOT_KEEP"] if name in variants else []
+        )
+        for name in sorted(delete)
+    }
     hints = []
     for name in sorted(rows):
         if name in delete:
@@ -238,6 +254,8 @@ def build_cleanup_plan(
         "schema_version": RULE_VERSION,
         "original_source": str(original),
         "source_sha256": _sha256_file(original),
+        "geometry_report_sha256": _sha256_file(geometry_report),
+        "geometry_report_path": str(geometry_report.resolve()),
         "inventory_catalog_sha256": _digest_catalog(rows),
         "source_solid_count": len(rows),
         "delete_count": len(delete),
@@ -246,6 +264,9 @@ def build_cleanup_plan(
         "variant_groups": normalized_groups,
         "protected_ids": sorted(protected | variant_keeps),
         "delete_ids": sorted(delete),
+        "delete_reasons": delete_reasons,
+        "zero_volume_delete_ids": sorted(zero_ids),
+        "zero_volume_delete_count": len(zero_ids),
         "keep_ids_count": len(expected_remaining),
         "review_suggestions": hints,
         "review_suggestion_count": len(hints),
@@ -259,10 +280,10 @@ def build_cleanup_plan(
         "geometry_review_supplied": geometry_report is not None,
         "note": note,
         "warnings": [
-            "名称提示和体积为零的几何体仅供人工检查，不会自动删除",
-            "USB/耳机/马达/前摄/连接器等真实器件默认保留，是否剔除取决于电磁仿真目标",
+            "R001 已确定：所有 V=0 Solid 列入删除计划，不受表面积或对象名称影响",
+            "名称提示不会删除非零体积对象；真实器件若 V=0 仍执行 R001",
             "变体保留哪一个必须通过 variant_groups 显式指定，不按版本号自动猜测",
-            "尚未执行任何实际删除；建议先用非生产副本做少量 Solid 实机验收",
+            "当前为预览：未执行删除；未来只修改独立 CST 副本并回读验证",
         ],
     }
 
