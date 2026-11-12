@@ -1,6 +1,7 @@
 """P3-C command orchestration tests; fake COM, never touches real CST."""
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -94,3 +95,66 @@ def test_cli_partial_report_when_cst_bbox_is_missing(tmp_path, monkeypatch):
     assert data["status"] == "PARTIAL"
     assert data["spatial"]["missing_bbox_count"] == 1
     assert data["spatial"]["features"][0]["loose_bounds"] is None
+
+
+
+def test_cleanup_retries_then_preserves_locked_temp_files(tmp_path, monkeypatch):
+    work = tmp_path / "cst-p3-copy"
+    work.mkdir()
+    (work / "Existing.cst").write_bytes(b"still-open")
+
+    def locked(_work):
+        raise PermissionError("[WinError 32] 文件正由其他程序使用")
+
+    monkeypatch.setattr(p3_spatial.shutil, "rmtree", locked)
+    monkeypatch.setattr(p3_spatial.time, "sleep", lambda _seconds: None)
+    with pytest.warns(RuntimeWarning, match="仍被占用"):
+        assert p3_spatial._cleanup_workdir(work) is False
+    assert (work / "Existing.cst").read_bytes() == b"still-open"
+
+
+def test_spatial_cli_reports_partial_when_temp_copy_is_locked(tmp_path, monkeypatch):
+    project = tmp_path / "model.cst"
+    project.write_bytes(b"source")
+    report = tmp_path / "local-data" / "P3C_Spatial_Report.json"
+    rows = [
+        MARKER, "mm", "0.001", "1", "main:solid", "Copper", "OK",
+        "0", "3", "0", "2", "0", "1",
+    ]
+    catalog = p3_spatial.parse_spatial_data(rows)
+    catalog = replace(catalog, cleanup_deferred=True, cleanup_path="C:/temp/cst-copy")
+    monkeypatch.setattr(cli, "query_spatial_from_copy", lambda source, timeout: catalog)
+    assert cli.main(
+        ["spatial", "--source", str(project), "--report", str(report)]
+    ) == 1
+    result = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "PARTIAL"
+    assert result["spatial"]["cleanup_deferred"] is True
+    assert result["spatial"]["cleanup_path"] == "C:/temp/cst-copy"
+    assert "warnings" in result
+    assert project.read_bytes() == b"source"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Requires Windows COM query entry")
+def test_com_failure_not_masked_by_winerror32_during_cleanup(tmp_path, monkeypatch):
+    project = tmp_path / "Existing.cst"
+    project.write_bytes(b"unchanged")
+
+    def failing_run(_cmd, **_kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stderr="CST real macro error (sanitized)",
+            stdout="",
+        )
+
+    def locked_cleanup(_work):
+        raise PermissionError("[WinError 32] CST project is in use")
+
+    monkeypatch.setattr(p3_spatial.subprocess, "run", failing_run)
+    monkeypatch.setattr(p3_spatial.shutil, "rmtree", locked_cleanup)
+    monkeypatch.setattr(p3_spatial.time, "sleep", lambda _seconds: None)
+
+    with pytest.warns(RuntimeWarning, match="仍被占用"):
+        with pytest.raises(RuntimeError, match="CST real macro error"):
+            p3_spatial.query_spatial_from_copy(project)
+    assert project.read_bytes() == b"unchanged"
