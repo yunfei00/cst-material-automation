@@ -68,6 +68,62 @@ Get-Content 'local-data\P3C_Spatial_Report.json' -Encoding UTF8
 
 此修复通过模拟 Windows 文件占用/重试测试后，仍需真实 CST 再次验证；GitHub CI 无法模拟 CST 的实际锁释放时序。
 
+
+## P3-C 根因诊断：清理 dp.parmap 时提示 WinError 32，但稍后可以手动删除
+
+**实际观测（2026-11-12）**：P3-C 已读取包含 7311 个 Solid 的空间报告；邻近分析因旧版 800 个限制显示 `SKIPPED`（此状态与包围盒是否读取成功无关）。末尾清理临时工程 `result/dp.parmap` 时出现 `WinError 32`，但运行结束后手动删除成功。
+
+**这说明文件占用可能是短暂的，不能直接归因于“没有权限”或“用户忘了关 CST”。** 也不能仅凭手动删除成功判断此前是哪一个进程持锁。需要在报错的瞬间收集证据。
+
+诊断分支 `fix/p3c-win32-lock-diagnosis` 已增加：
+
+1. PowerShell COM 生命周期节点：`application_connected`、`temporary_project_opened`、`macro_returned`、`project_quit_returned` 或 `project_quit_failed`、`powershell_com_finally_completed`。
+2. Python 临时目录清理时间线：第一次失败的相对路径、Windows 错误码、重试次数、累计时间、是否最终释放。
+3. 发生第一次文件共享冲突时，使用 Windows 自带 **Restart Manager 的只读接口** `RmGetList` 查询当前占用者 PID/进程名称；不需下载第三方程序，也**不会关闭或重启任何进程**。
+4. 最多再尝试约 10 秒清理：若最终成功，记录 `lock_observed=true`、`cleanup_ok=true`、`cleanup_elapsed_seconds`；若持续失败，保留临时目录和查询结果，`status=PARTIAL`。
+5. **占用者列表为空不证明没有文件锁**：锁可能已在查询前释放，或 Windows 接口无法列出该类占用。
+
+### 只运行一次根因诊断（Windows PowerShell）
+
+从已通过验证的 P3-A 同一个非生产 CST 工程运行。下面仅在终端打印摘要；**不要使用 Get-Content 不带字段过滤直接打印整个 JSON**：
+
+```powershell
+$ErrorActionPreference = 'Stop'
+git fetch origin
+if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
+git switch fix/p3c-win32-lock-diagnosis
+if ($LASTEXITCODE -ne 0) { throw '切换诊断分支失败' }
+git pull --ff-only origin fix/p3c-win32-lock-diagnosis
+if ($LASTEXITCODE -ne 0) { throw '更新诊断分支失败' }
+$env:PYTHONPATH = Join-Path (Get-Location) 'src'
+
+$source = 'D:\CST_Test\Existing.cst'
+$report = 'local-data\P3C_Lock_Diagnostics.json'
+python -m cst_material.cli spatial --source $source --neighbors 0 --timeout 240 --report $report
+
+$r = Get-Content $report -Raw -Encoding UTF8 | ConvertFrom-Json
+$d = $r.spatial.cleanup_diagnostics
+[PSCustomObject]@{
+  Status = $r.status
+  Stage = $r.stage
+  SolidCount = $r.spatial.solid_count
+  MissingBBox = $r.spatial.missing_bbox_count
+  CleanupOK = $d.cleanup_ok
+  CleanupAttempts = $d.cleanup_attempts
+  CleanupSeconds = $d.cleanup_elapsed_seconds
+  FirstBlockedFile = $d.first_cleanup_failure.file
+  FirstWinError = $d.first_cleanup_failure.winerror
+  FirstOwnerStatus = $d.first_owner_snapshot.status
+  FirstOwnerProcesses = ($d.first_owner_snapshot.processes | ForEach-Object { "$($_.application) PID=$($_.pid)" }) -join '; '
+  ComEvents = $d.com_lifecycle_events -join ', '
+} | Format-List
+```
+
+若本次清理直接成功且没有 `lock_observed`，只能说明这次没捕捉到共享冲突，**不能回溯证明上一轮占用者身份**。请勿为复现而主动锁定或删除生产工程。诊断记录仍留在本机 `local-data/`；可以分享脱敏摘要，不可上传整个 JSON 或公司工程。
+
+**另外**：7311 个 Solid 的邻近 `SKIPPED` 是单独的性能限制；本诊断分支暂时将邻近设置为 0，以免与根因排查混淆。后续再单独开发和验收大规模邻近候选分析。
+
+
 ## 安全机制
 
 - 仅将 `.cst` 复制到 Windows 临时目录，项目对象从复制文件打开。临时脚本、输出放在同一隔离目录。
