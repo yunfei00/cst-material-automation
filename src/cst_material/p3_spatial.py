@@ -23,6 +23,7 @@ from pathlib import Path
 
 from cst_material.cst_bindings import _vba_string
 from cst_material.domain import BoundingBox
+from cst_material.p3_lock_diagnostics import identify_file_owners
 
 MARKER = "CST_P3_SPATIAL_V1"
 MAX_NEIGHBOR_SOLIDS = 800
@@ -48,6 +49,7 @@ class SpatialCatalog:
     missing_bbox_count: int
     cleanup_deferred: bool = False
     cleanup_path: str | None = None
+    cleanup_diagnostics: dict | None = None
 
 
 def _number(value: str, what: str) -> float:
@@ -193,6 +195,7 @@ def summarize_spatial(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
         "missing_bbox_count": catalog.missing_bbox_count,
         "cleanup_deferred": catalog.cleanup_deferred,
         "cleanup_path": catalog.cleanup_path,
+        "cleanup_diagnostics": catalog.cleanup_diagnostics,
         "bounds_type": "CST GetLooseBoundingBoxOfShape: non-tight AABB; upper extent, not exact geometry",
         "features": [
             {
@@ -309,30 +312,62 @@ try {
 """
 
 
-def _cleanup_workdir(work: Path) -> bool:
-    """Best-effort cleanup after a CST COM query.
+def _cleanup_workdir(
+    work: Path, diagnostics: dict | None = None, *, attempts: int = 21,
+    sleep_seconds: float = 0.5,
+) -> bool:
+    """Trace Windows share-violation timing and try deletion for up to 10 s.
 
-    A background CST process can still hold the copied .cst after the COM
-    PowerShell host terminates. Never let WinError 32 overwrite the real CST
-    query result or an earlier macro error. Never terminate CST.exe.
+    The first WinError32 triggers a read-only Windows Restart Manager owner
+    snapshot. On subsequent attempts record time to release and final result.
+    Never kill processes or hide the preceding VBA/COM failure.
     """
-    for attempt in range(4):
+    started = time.monotonic()
+    report = diagnostics if diagnostics is not None else {}
+    report["cleanup_attempts"] = 0
+    report["lock_observed"] = False
+    for attempt in range(attempts):
+        report["cleanup_attempts"] = attempt + 1
         try:
             shutil.rmtree(work)
+            report["cleanup_ok"] = True
+            report["cleanup_elapsed_seconds"] = round(time.monotonic() - started, 3)
             return True
         except FileNotFoundError:
+            report["cleanup_ok"] = True
+            report["cleanup_elapsed_seconds"] = round(time.monotonic() - started, 3)
             return True
         except OSError as exc:
-            if attempt == 3:
+            report["lock_observed"] = True
+            blocked = Path(exc.filename) if exc.filename else None
+            if "first_cleanup_failure" not in report:
+                relative = None
+                if blocked is not None:
+                    try:
+                        relative = blocked.resolve().relative_to(work.resolve()).as_posix()
+                    except ValueError:
+                        relative = blocked.name
+                report["first_cleanup_failure"] = {
+                    "file": relative,
+                    "winerror": getattr(exc, "winerror", None),
+                    "error_type": type(exc).__name__,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                }
+                if blocked is not None:
+                    report["first_owner_snapshot"] = identify_file_owners(blocked)
+            if attempt + 1 == attempts:
+                report["cleanup_ok"] = False
+                report["cleanup_elapsed_seconds"] = round(time.monotonic() - started, 3)
+                if blocked is not None:
+                    report["last_owner_snapshot"] = identify_file_owners(blocked)
                 warnings.warn(
-                    f"P3-C 临时目录仍被占用，已保留供本机稍后清理：{work} "
-                    f"（{type(exc).__name__}: {exc}）。"
-                    "请确认 CST 已关闭该临时工程，再人工删除；不要终止其他 CST 工程。",
+                    f"P3-C 临时目录清理失败（{type(exc).__name__}: {exc}），"
+                    f"保留本机临时目录：{work}。请在确认 CST 已释放该副本后清理。",
                     RuntimeWarning,
                     stacklevel=2,
                 )
                 return False
-            time.sleep(0.25 * (attempt + 1))
+            time.sleep(sleep_seconds)
     return False
 
 
@@ -355,6 +390,7 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
     work = Path(tempfile.mkdtemp(prefix="cst_p3_spatial_"))
     catalog: SpatialCatalog | None = None
     cleanup_ok = False
+    cleanup_diagnostics: dict = {}
     try:
         copied = work / source.name
         try:
@@ -405,10 +441,11 @@ def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
         catalog = parse_spatial_data(content)
     finally:
         # This cleanup cannot raise, so it never masks a previous error.
-        cleanup_ok = _cleanup_workdir(work)
+        cleanup_ok = _cleanup_workdir(work, cleanup_diagnostics)
     assert catalog is not None
     if not cleanup_ok:
         return replace(
-            catalog, cleanup_deferred=True, cleanup_path=str(work)
+            catalog, cleanup_deferred=True, cleanup_path=str(work),
+            cleanup_diagnostics=cleanup_diagnostics,
         )
-    return catalog
+    return replace(catalog, cleanup_diagnostics=cleanup_diagnostics)
