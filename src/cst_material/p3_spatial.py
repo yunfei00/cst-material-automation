@@ -26,7 +26,6 @@ from cst_material.domain import BoundingBox
 from cst_material.p3_lock_diagnostics import identify_file_owners
 
 MARKER = "CST_P3_SPATIAL_V1"
-MAX_NEIGHBOR_SOLIDS = 800
 
 
 @dataclass(frozen=True)
@@ -146,44 +145,11 @@ def _bbox_separation(a: BoundingBox, b: BoundingBox) -> float:
 
 
 def analyze_neighbors(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
-    """Each solid gets nearest *loose-box candidates*, not contact claims."""
-    if not 0 <= neighbor_limit <= 20:
-        raise ValueError("邻居数量必须在 0 到 20 之间")
-    valid = [feature for feature in catalog.features if feature.loose_bounds]
-    if neighbor_limit == 0:
-        return {"status": "SKIPPED", "reason": "显式关闭邻近分析", "neighbors": []}
-    if len(valid) > MAX_NEIGHBOR_SOLIDS:
-        return {
-            "status": "SKIPPED",
-            "reason": f"可用 Solid 数量 {len(valid)} 超过安全上限 {MAX_NEIGHBOR_SOLIDS}，避免 O(N²) 计算",
-            "neighbors": [],
-        }
-    results = []
-    for current in valid:
-        comparisons = sorted(
-            (
-                _bbox_separation(current.loose_bounds, other.loose_bounds),
-                other.identifier,
-            )
-            for other in valid
-            if other.identifier != current.identifier
-        )
-        results.append(
-            {
-                "identifier": current.identifier,
-                "nearest_bbox_candidates": [
-                    {
-                        "identifier": other_name,
-                        "loose_bbox_distance_lower_bound_project_unit": distance,
-                        "loose_bbox_distance_lower_bound_m": distance
-                        * catalog.length_unit_to_m,
-                        "loose_boxes_overlap_or_touch": distance == 0,
-                    }
-                    for distance, other_name in comparisons[:neighbor_limit]
-                ],
-            }
-        )
-    return {"status": "PASS", "neighbors": results}
+    """Delegate to P3-D bounded-memory NumPy analysis (no full N x N matrix)."""
+    from cst_material.p3_neighbors import analyze_neighbors as analyze_batched
+
+    return analyze_batched(catalog, neighbor_limit)
+
 
 
 def summarize_spatial(catalog: SpatialCatalog, neighbor_limit: int) -> dict:

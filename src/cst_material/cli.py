@@ -14,6 +14,7 @@ from cst_material.cst_api import assign_and_verify, connect, read_inventory
 from cst_material.cst_bindings import binding
 from cst_material.p3_geometry import read_geometry_features
 from cst_material.p3_mtd_catalog import scan_mtd_library
+from cst_material.p3_neighbors import analyze_neighbors, read_spatial_report
 from cst_material.p3_spatial import query_spatial_from_copy, summarize_spatial
 
 
@@ -151,6 +152,33 @@ def _run_spatial(args: argparse.Namespace, output: dict) -> None:
     output["stage"] = "P3-C 空间查询完成"
 
 
+def _run_spatial_offline(args: argparse.Namespace, output: dict) -> None:
+    """P3-D: reuse local P3-C JSON without starting CST or touching its project."""
+    output["stage"] = "P3-D 读取并校验已有 P3-C JSON 报告"
+    catalog, provenance = read_spatial_report(Path(args.report_in))
+    output["input_summary"] = {
+        **provenance,
+        "solid_count": catalog.declared_solid_count,
+        "valid_bbox_count": catalog.declared_solid_count - catalog.missing_bbox_count,
+        "length_unit": catalog.length_unit,
+        "length_unit_to_m": catalog.length_unit_to_m,
+    }
+    output["stage"] = "P3-D 分批计算非紧包围盒邻近候选"
+    output["neighbors"] = analyze_neighbors(
+        catalog, args.neighbors, batch_size=args.batch_size
+    )
+    if output["neighbors"]["status"] == "PASS":
+        output["status"] = "PARTIAL" if catalog.missing_bbox_count else "PASS"
+    else:
+        output["status"] = "PARTIAL"
+    output["scope"] = (
+        "只根据已有非紧包围盒计算距离下界，不代表真实接触、"
+        "精确实体间距、质量中心或材料类型。"
+        "不启动 CST，不修改输入 JSON 或工程。"
+    )
+    output["stage"] = "P3-D 离线邻近分析完成"
+
+
 def _mapping(args: argparse.Namespace) -> dict[str, str]:
     result: dict[str, str] = {}
     if args.mapping:
@@ -228,12 +256,24 @@ def main(argv: list[str] | None = None) -> int:
     p3c.add_argument("--report", default="local-data/P3C_Spatial_Report.json")
     p3c.add_argument("--timeout", type=int, default=240, help="COM/VBA 查询超时，秒")
     p3c.add_argument("--neighbors", type=int, default=5, help="每个 Solid 最近的包围盒候选数量 0～20")
+    p3d = commands.add_parser(
+        "spatial-offline",
+        help="P3-D：直接从 P3-C JSON 分批计算最近邻，不启动 CST",
+    )
+    p3d.add_argument("--report-in", required=True, help="已有 P3-C spatial 报告")
+    p3d.add_argument("--report", default="local-data/P3D_Neighbors_Report.json")
+    p3d.add_argument("--neighbors", type=int, default=5, help="每个 Solid 最近的候选数量 0～20")
+    p3d.add_argument("--batch-size", type=int, default=32, help="NumPy 单批处理 1～128 个 Solid")
     args = parser.parse_args(argv)
     # A typo in --report must never overwrite an engineering project or MTD.
     # This also covers the P1/P2 report commands without altering workflows.
     report_file = Path(args.report).resolve()
     if report_file.suffix.casefold() in {".cst", ".mtd", ".sat", ".brd", ".step", ".stp"}:
         print("拒绝将 JSON 报告写入工程/材料文件路径", file=sys.stderr)
+        return 2
+    # Prevent the JSON error reporter from overwriting the only source.
+    if args.command == "spatial-offline" and report_file == Path(args.report_in).resolve():
+        print("P3-D 输出报告不能覆盖输入 P3-C 报告", file=sys.stderr)
         return 2
     if args.command == "scan-mtd":
         # Reject unsafe output *before* the generic error reporter writes a
@@ -243,7 +283,12 @@ def main(argv: list[str] | None = None) -> int:
         if report_file.is_relative_to(library_root):
             print("拒绝将报告写入材料库内部；请选择 local-data 目录", file=sys.stderr)
             return 2
-    source = args.library_root if args.command == "scan-mtd" else args.source
+    if args.command == "scan-mtd":
+        source = args.library_root
+    elif args.command == "spatial-offline":
+        source = args.report_in
+    else:
+        source = args.source
     output: dict = {
         "task": args.command,
         "source": str(Path(source).resolve()),
@@ -258,6 +303,8 @@ def main(argv: list[str] | None = None) -> int:
             _run_geometry(Path(args.source), output)
         elif args.command == "spatial":
             _run_spatial(args, output)
+        elif args.command == "spatial-offline":
+            _run_spatial_offline(args, output)
         else:
             _run_mtd_scan(Path(args.library_root), Path(args.report), output)
     except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
