@@ -25,7 +25,8 @@ from cst_material.cst_bindings import _vba_string
 from cst_material.domain import BoundingBox
 
 MARKER = "CST_P3_SPATIAL_V1"
-MAX_NEIGHBOR_SOLIDS = 800
+MAX_NEIGHBOR_SOLIDS = 12000
+NEIGHBOR_BATCH_SIZE = 32
 
 
 @dataclass(frozen=True)
@@ -144,44 +145,128 @@ def _bbox_separation(a: BoundingBox, b: BoundingBox) -> float:
 
 
 def analyze_neighbors(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
-    """Each solid gets nearest *loose-box candidates*, not contact claims."""
+    """Exact closest *loose AABB* candidates with bounded working memory.
+
+    Brute-force Python sorting needed O(N) memory per Solid and repeated all
+    comparisons. Here numpy calculates bounded blocks (32 x N) of pairwise
+    AABB separation and selects only the nearest k without materializing the
+    N x N distance matrix. Runtime remains O(N^2), but peak temporary memory
+    is O(batch_size * N), making ~7,311 Solid practical on Windows.
+    """
     if not 0 <= neighbor_limit <= 20:
         raise ValueError("邻居数量必须在 0 到 20 之间")
-    valid = [feature for feature in catalog.features if feature.loose_bounds]
+    # Stable alphabetical ordering for tied distances, including many overlaps.
+    valid = sorted(
+        (feature for feature in catalog.features if feature.loose_bounds is not None),
+        key=lambda feature: feature.identifier,
+    )
+    count = len(valid)
     if neighbor_limit == 0:
         return {"status": "SKIPPED", "reason": "显式关闭邻近分析", "neighbors": []}
-    if len(valid) > MAX_NEIGHBOR_SOLIDS:
+    if count > MAX_NEIGHBOR_SOLIDS:
         return {
             "status": "SKIPPED",
-            "reason": f"可用 Solid 数量 {len(valid)} 超过安全上限 {MAX_NEIGHBOR_SOLIDS}，避免 O(N²) 计算",
+            "reason": (
+                f"可用 Solid 数量 {count} 超过计算上限 {MAX_NEIGHBOR_SOLIDS}，"
+                "请减少分析范围或使用 --neighbors 0；保留所有包围盒数据"
+            ),
             "neighbors": [],
         }
+    if count == 0:
+        return {"status": "SKIPPED", "reason": "没有可用于邻近分析的包围盒", "neighbors": []}
+    if count == 1:
+        return {
+            "status": "PASS",
+            "algorithm": "batched-numpy-exact-loose-aabb",
+            "analyzed_solid_count": 1,
+            "neighbors": [
+                {"identifier": valid[0].identifier, "nearest_bbox_candidates": []}
+            ],
+        }
+
+    import numpy as np
+
+    lower = np.asarray(
+        [[f.loose_bounds.xmin, f.loose_bounds.ymin, f.loose_bounds.zmin] for f in valid],
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        [[f.loose_bounds.xmax, f.loose_bounds.ymax, f.loose_bounds.zmax] for f in valid],
+        dtype=np.float64,
+    )
+    k = min(neighbor_limit, count - 1)
     results = []
-    for current in valid:
-        comparisons = sorted(
-            (
-                _bbox_separation(current.loose_bounds, other.loose_bounds),
-                other.identifier,
+    for start in range(0, count, NEIGHBOR_BATCH_SIZE):
+        stop = min(count, start + NEIGHBOR_BATCH_SIZE)
+        lo = lower[start:stop]
+        hi = upper[start:stop]
+
+        # Axis gap between each pair of disjoint intervals; zero on overlap.
+        dx = np.maximum(
+            0.0,
+            np.maximum(lo[:, None, 0] - upper[None, :, 0], lower[None, :, 0] - hi[:, None, 0]),
+        )
+        dy = np.maximum(
+            0.0,
+            np.maximum(lo[:, None, 1] - upper[None, :, 1], lower[None, :, 1] - hi[:, None, 1]),
+        )
+        dz = np.maximum(
+            0.0,
+            np.maximum(lo[:, None, 2] - upper[None, :, 2], lower[None, :, 2] - hi[:, None, 2]),
+        )
+        np.hypot(dx, dy, out=dx)
+        np.hypot(dx, dz, out=dx)
+        # Do not treat numeric overflow in a CST bounding box as valid.
+        if not np.isfinite(dx).all():
+            raise RuntimeError("P3-C 包围盒邻近距离包含 NaN/Inf，拒绝输出不可靠结果")
+        block_rows = np.arange(stop - start)
+        dx[block_rows, np.arange(start, stop)] = np.inf
+
+        # argpartition avoids sorting all N candidates for each Solid.
+        subset = np.argpartition(dx, kth=k - 1, axis=1)[:, :k]
+        for offset, nearest_indices in enumerate(subset):
+            distances = dx[offset]
+            # Include *all* candidates tied at the kth distance, so the
+            # result is deterministic by identifier even for huge overlap sets.
+            cutoff = float(np.max(distances[nearest_indices]))
+            strictly_better = np.flatnonzero(distances < cutoff)
+            better_sorted = sorted(
+                (int(index) for index in strictly_better),
+                key=lambda index: (float(distances[index]), index),
             )
-            for other in valid
-            if other.identifier != current.identifier
-        )
-        results.append(
-            {
-                "identifier": current.identifier,
-                "nearest_bbox_candidates": [
+            # valid[] is already ordered by identifier; equal-distance ties
+            # can therefore be selected directly in index order.
+            ties = np.flatnonzero(distances == cutoff)
+            nearest = better_sorted + [
+                int(index) for index in ties[: k - len(better_sorted)]
+            ]
+            candidates = []
+            for index in nearest:
+                distance = float(distances[index])
+                distance_m = distance * catalog.length_unit_to_m
+                if not math.isfinite(distance_m):
+                    raise RuntimeError("P3-C 包围盒距离单位换算溢出")
+                candidates.append(
                     {
-                        "identifier": other_name,
+                        "identifier": valid[index].identifier,
                         "loose_bbox_distance_lower_bound_project_unit": distance,
-                        "loose_bbox_distance_lower_bound_m": distance
-                        * catalog.length_unit_to_m,
-                        "loose_boxes_overlap_or_touch": distance == 0,
+                        "loose_bbox_distance_lower_bound_m": distance_m,
+                        "loose_boxes_overlap_or_touch": distance == 0.0,
                     }
-                    for distance, other_name in comparisons[:neighbor_limit]
-                ],
-            }
-        )
-    return {"status": "PASS", "neighbors": results}
+                )
+            results.append(
+                {
+                    "identifier": valid[start + offset].identifier,
+                    "nearest_bbox_candidates": candidates,
+                }
+            )
+    return {
+        "status": "PASS",
+        "algorithm": "batched-numpy-exact-loose-aabb",
+        "analyzed_solid_count": count,
+        "neighbors_per_solid": k,
+        "neighbors": results,
+    }
 
 
 def summarize_spatial(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
