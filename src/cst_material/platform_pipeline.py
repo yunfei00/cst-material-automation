@@ -94,6 +94,15 @@ def process_project(
         report["stage"] = "CST_STEP_EXPORT"
         export_result = export_cst_solids(staged_cst, cache)
         report["step_export_count"] = export_result["solid_count"]
+        # Keep approved Solid-ID labels scoped to the actual INPUT model.
+        # A Component:Solid name alone may occur in unrelated projects.
+        manifest_path = cache / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["original_source_sha256"] = original_hash
+        manifest["original_source"] = str(src)
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         report["stage"] = "OFFLINE_OCCT_INDEX"
         catalog = build_catalog(cache)
