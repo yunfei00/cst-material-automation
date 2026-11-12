@@ -16,8 +16,8 @@ from cst_material.p3_geometry import read_geometry_features
 from cst_material.p3_mtd_catalog import scan_mtd_library
 from cst_material.p3_neighbors import analyze_neighbors, read_spatial_report
 from cst_material.p3_spatial import query_spatial_from_copy, summarize_spatial
-from cst_material.p4_structure import build_structure_report
 from cst_material.p4_cleanup import build_cleanup_plan
+from cst_material.p4_structure import build_structure_report
 
 
 def _report(path: Path, data: dict) -> None:
