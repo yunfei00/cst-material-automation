@@ -26,20 +26,20 @@ if ($LASTEXITCODE -ne 0) { throw '拉取 P3-D 分支失败' }
 $env:PYTHONPATH = Join-Path (Get-Location) 'src'
 
 # 使用已有的 P3-C 本地 JSON；无需再启动 CST
-$input = 'local-data\P3C_Lock_Diagnostics.json'
-if (-not (Test-Path -LiteralPath $input)) {
-    $input = 'local-data\P3C_Spatial_Report.json'
+$inputFile = 'local-data\P3C_Lock_Diagnostics.json'
+if (-not (Test-Path -LiteralPath $inputFile)) {
+    $inputFile = 'local-data\P3C_Spatial_Report.json'
 }
-if (-not (Test-Path -LiteralPath $input)) {
-    throw '未找到 P3-C 本地报告，请将 $input 改为真实路径'
+if (-not (Test-Path -LiteralPath $inputFile)) {
+    throw '未找到 P3-C 本地报告，请将 $inputFile 改为真实路径'
 }
-$output = 'local-data\P3D_Neighbors_Report.json'
+$outputFile = 'local-data\P3D_Neighbors_Report.json'
 
-python -m cst_material.cli spatial-offline --report-in $input --report $output --neighbors 5 --batch-size 32
+python -m cst_material.cli spatial-offline --report-in $inputFile --report $outputFile --neighbors 5 --batch-size 32
 $code = $LASTEXITCODE
 if ($code -ne 0) { Write-Warning "P3-D 返回代码 $code，请查看本地报告的 status/error" }
 
-$r = Get-Content $output -Raw -Encoding UTF8 | ConvertFrom-Json
+$r = Get-Content $outputFile -Raw -Encoding UTF8 | ConvertFrom-Json
 [PSCustomObject]@{
   Status          = $r.status
   Stage           = $r.stage
@@ -54,6 +54,8 @@ $r = Get-Content $output -Raw -Encoding UTF8 | ConvertFrom-Json
   Algorithm       = $r.neighbors.method
 } | Format-List
 ```
+
+**PowerShell 变量命名修正（实机反馈，2026-11-12）：** 早期说明误把 `$input` 用作 JSON 文件路径变量；`$input` 是 PowerShell 的**自动变量**，与函数/脚本块的管道输入枚举器有关，容易导致赋值或参数传递异常。用户将它改为 `$interface` 后已能正常执行。本文统一改用 `$inputFile`、`$outputFile`。后续 PowerShell 示例不再把 `$input` 作为普通自定义变量。原始 JSON 近 25 万行，**不要直接打印全文**，只输出摘要。最后的 `labels.status=SKIPPED` 与几何邻居的 `neighbors.status` 必须根据实际字段分别核对；仅凭后者/前者不能认定整体任务失败。
 
 **注意：** 原来的 `neighbors.status=SKIPPED` 可被新的离线命令重新计算。若原始报告是 `FAIL`，则 P3-D 会拒绝继续；如果原始是 `PARTIAL`，但所有包围盒均有效（例如只是 CST 临时文件清理延迟），可以离线继续分析。离线报告中的 `status` 由本次分析的有效包围盒决定，与旧文件清理异常分开记录。
 
