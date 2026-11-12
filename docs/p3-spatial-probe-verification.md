@@ -57,11 +57,12 @@ Get-Content 'local-data\P3C_Spatial_Report.json' -Encoding UTF8
 
 **此次修复：**
 
-1. 不再在 `with TemporaryDirectory` 离开时强制删除目录；使用显式受控的临时目录和有限次数清理重试。
-2. 如果 CST 仍占用副本，**不终止 CST 进程、不删除正在使用的文件**。若查询数据成功，则报告 `status=PARTIAL`、`spatial.cleanup_deferred=true`，并把待清理目录写入**本地** `spatial.cleanup_path`，不能标记为完整 PASS。
-3. 如果 COM 宏本来就失败，优先抛出真实的 `CST P3-C OLE/RunScript 失败`；清理时的 WinError 32 只作为额外本地警告，不能覆盖原始异常。
-4. 如果复制源工程到临时目录或读取宏输出时被独占，分别给出中文诊断，不把两个环节混成同一种故障。
-5. 仅修改 P3-C；P1/P2/P3-A/P3-B 保持已通过的工作流。
+1. 在 PowerShell 中先尝试关闭**临时 CST 工程**，再显式释放该 PowerShell 进程持有的工程/应用 COM 引用；**不调用全局应用的 Quit**，以免关闭其他工程。
+2. 不再在 `with TemporaryDirectory` 离开时强制删除目录；使用显式受控的临时目录和有限次数清理重试。
+3. 如果 CST 仍占用副本，**不终止 CST 进程、不删除正在使用的文件**。若查询数据成功，则报告 `status=PARTIAL`、`spatial.cleanup_deferred=true`，并把待清理目录写入**本地** `spatial.cleanup_path`，不能标记为完整 PASS。
+4. 如果 COM 宏本来就失败，优先抛出真实的 `CST P3-C OLE/RunScript 失败`；清理时的 WinError 32 只作为额外本地警告，不能覆盖原始异常。
+5. 如果复制源工程到临时目录或读取宏输出时被独占，分别给出中文诊断，不把两个环节混成同一种故障。
+6. 仅修改 P3-C；P1/P2/P3-A/P3-B 保持已通过的工作流。
 
 **本机处理：** 更新 P3-C 分支并重新运行同一 `spatial` 命令。若报告为 PARTIAL，在确认没有 CST 正在使用该**临时副本**后，再按 `cleanup_path` 仅清理该 P3-C 临时目录；**不要删除源 .cst 文件，不要关闭其他 CST 工程，不要强行终止 CST.exe**。若为 FAIL，提供脱敏的 `error` 和调用栈最后几行即可进一步区分：复制源工程、OLE 打开、VBA 输出还是最终清理。
 
