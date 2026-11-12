@@ -6,6 +6,7 @@ import json
 import shutil
 import sys
 import tempfile
+import traceback
 from dataclasses import asdict
 from pathlib import Path
 
@@ -33,24 +34,30 @@ def _run_inventory(source: Path, output: dict) -> None:
     if not source.is_file() or source.suffix.lower() != ".cst":
         raise ValueError("输入必须是已经存在的 .cst 工程文件")
     # Read-only guarantee: all model actions happen on a throwaway copy.
+    output["stage"] = "复制测试工程副本"
     with tempfile.TemporaryDirectory(prefix="cst_inventory_") as tmp:
         copied = Path(tmp) / source.name
         shutil.copy2(source, copied)
+        output["stage"] = "连接 CST Python 接口"
         env = connect()
         try:
+            output["stage"] = "打开 CST 工程副本"
             project = env.open_project(str(copied))
             try:
                 bindings = binding()
                 model = project.model3d
                 if model is None:
                     raise RuntimeError("CST 工程不包含三维模型")
+                output["stage"] = "CST Python 读取 get_tree_items 工程树"
                 output["tree_items"] = list(model.get_tree_items())
+                output["stage"] = "从工程树提取 Solid 和 Material"
                 inventory = read_inventory(project, bindings)
                 output.update(_snapshot(inventory))
                 try:
                     # Official VBA enumeration confirms the tree paths actually
                     # refer to Solid objects, instead of assuming every leaf
                     # beneath Components is a Solid.
+                    output["stage"] = "CST VBA 枚举 Solid 及查询材料"
                     catalog = read_shape_catalog(project)
                     output["vba_solid_count"] = len(catalog)
                     expected = {row["identifier"] for row in output["solids"]}
@@ -67,17 +74,25 @@ def _run_inventory(source: Path, output: dict) -> None:
                     output.setdefault("warnings", []).append(
                         f"官方 VBA 实体和材料查询失败：{type(exc).__name__}: {exc}"
                     )
+                    output["warning_traceback"] = traceback.format_exc()
             finally:
                 project.close()
         finally:
             env.close()
     output["status"] = "PARTIAL" if output.get("warnings") else "PASS"
+    output["stage"] = "读取完成"
 
 
 def _mapping(args: argparse.Namespace) -> dict[str, str]:
     result: dict[str, str] = {}
     if args.mapping:
-        data = json.loads(Path(args.mapping).read_text(encoding="utf-8-sig"))
+        try:
+            data = json.loads(Path(args.mapping).read_text(encoding="utf-8-sig"))
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                "材料映射 JSON 文件不是 UTF-8 编码；请在本机将该 JSON 另存为 UTF-8，"
+                "不要直接使用 errors=ignore 丢弃中文字符"
+            ) from exc
         if not isinstance(data, dict) or not all(
             isinstance(k, str) and isinstance(v, str) for k, v in data.items()
         ):
@@ -95,9 +110,12 @@ def _mapping(args: argparse.Namespace) -> dict[str, str]:
 
 
 def _run_assign(args: argparse.Namespace, output: dict) -> None:
+    output["stage"] = "读取 Solid→Material 映射"
     assignments = _mapping(args)
+    output["stage"] = "连接 CST Python 接口"
     env = connect()
     try:
+        output["stage"] = "CST 副本赋材与重新打开核对"
         inventory = assign_and_verify(
             env, Path(args.source), Path(args.dest), assignments, binding()
         )
@@ -107,6 +125,7 @@ def _run_assign(args: argparse.Namespace, output: dict) -> None:
     output["assignments"] = assignments
     output["destination"] = str(Path(args.dest).resolve())
     output["status"] = "PASS"
+    output["stage"] = "赋材与回读完成"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,6 +156,18 @@ def main(argv: list[str] | None = None) -> int:
             _run_assign(args, output)
     except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
         output["error"] = f"{type(exc).__name__}: {exc}"
+        # The full Python traceback is only written to the local report in
+        # local-data/ (gitignored); do not upload it from company workstations.
+        output["traceback"] = traceback.format_exc()
+        if isinstance(exc, UnicodeDecodeError):
+            output["encoding_error"] = {
+                "encoding": exc.encoding,
+                "invalid_bytes_hex": exc.object[exc.start : exc.end].hex(),
+                "start": exc.start,
+                "end": exc.end,
+                "reason": exc.reason,
+            }
+        print(f"失败阶段：{output.get('stage', '未知')}", file=sys.stderr)
         print(f"失败：{output['error']}", file=sys.stderr)
     _report(Path(args.report), output)
     return 0 if output["status"] == "PASS" else 1
