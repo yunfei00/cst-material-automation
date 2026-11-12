@@ -57,6 +57,92 @@ def shape_candidate(features: dict) -> dict:
     return {"shape": "OTHER", "candidate": None, "evidence": ["未命中特定形态规则"]}
 
 
+def compare_reference_geometry(features: dict, reference_features: dict) -> float | None:
+    """Bounded, interpretable shape similarity, NOT a proof of part identity.
+
+    Translation and global-axis rotation do not affect the sorted dimensions.
+    Size, volume, area, topology and curved-face fraction are compared.
+    This deliberately does not claim invariance to CAD topology healing,
+    different tolerances, changes of units, or heterogeneous assemblies.
+    """
+    dims = features.get("dimensions_mm")
+    other = reference_features.get("dimensions_mm")
+    if (
+        not isinstance(dims, list) or not isinstance(other, list)
+        or len(dims) != 3 or len(other) != 3
+    ):
+        return None
+    values = dims + other
+    if not all(
+        isinstance(v, (int, float)) and not isinstance(v, bool)
+        and math.isfinite(v) and v > 0 for v in values
+    ):
+        return None
+    lhs = sorted(float(v) for v in dims)
+    rhs = sorted(float(v) for v in other)
+    deviation = sum(
+        abs(math.log(a / b)) for a, b in zip(lhs, rhs, strict=True)
+    ) / 3
+    for feature, weight in (
+        ("volume_mm3", 0.2), ("surface_mm2", 0.12), ("face_count", 0.08)
+    ):
+        x, y = features.get(feature), reference_features.get(feature)
+        if (
+            isinstance(x, (int, float)) and isinstance(y, (int, float))
+            and not isinstance(x, bool) and not isinstance(y, bool)
+            and math.isfinite(x) and math.isfinite(y) and x > 0 and y > 0
+        ):
+            deviation += weight * abs(math.log(x / y))
+    for item in (features, reference_features):
+        if not isinstance(item.get("surface_types", {}), dict):
+            return None
+    def curved_ratio(feat):
+        surfaces = feat.get("surface_types", {})
+        faces = sum(
+            v for v in surfaces.values()
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 0
+        )
+        curved = sum(
+            v for key, v in surfaces.items()
+            if "Plane" not in key and isinstance(v, int)
+            and not isinstance(v, bool) and v >= 0
+        )
+        return curved / faces if faces else None
+    a, b = curved_ratio(features), curved_ratio(reference_features)
+    if a is not None and b is not None:
+        deviation += 0.5 * abs(a - b)
+    return round(1 / (1 + deviation), 6)
+
+
+def similar_reference_candidate(
+    features: dict, references: list[dict], threshold: float = 0.85
+) -> dict | None:
+    """Return a review-only candidate if the best reference is unambiguous."""
+    candidates = []
+    for reference in references:
+        if (
+            not isinstance(reference, dict)
+            or reference.get("approved") is not True
+            or not isinstance(reference.get("features"), dict)
+            or not isinstance(reference.get("part_type"), str)
+            or not reference["part_type"]
+        ):
+            continue
+        score = compare_reference_geometry(features, reference["features"])
+        if score is not None and score >= threshold:
+            candidates.append((score, reference["part_type"]))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+    best_score, label = candidates[0]
+    if any(
+        score >= best_score - 0.02 and candidate_label != label
+        for score, candidate_label in candidates[1:]
+    ):
+        return {"candidate": None, "score": best_score, "ambiguous": True}
+    return {"candidate": label, "score": best_score, "ambiguous": False}
+
+
 def recognize_catalog(catalog: dict, knowledge: dict) -> list[dict]:
     """Produce auditable labels while explicitly preserving UNKNOWN identity."""
     records = catalog.get("records")
@@ -104,9 +190,21 @@ def recognize_catalog(catalog: dict, knowledge: dict) -> list[dict]:
             status = "CONFIRMED"
             match_method = "EXACT_APPROVED_REFERENCE_SHA256"
             evidence = ["与工程师确认的参考 CAD 文件字节一致"]
-        elif hint["candidate"]:
-            status = "CANDIDATE"
-            evidence.append("形态相似不等于实际功能；不自动赋材料")
+        else:
+            nearest = similar_reference_candidate(rec["features"], references)
+            if nearest is not None and nearest["ambiguous"]:
+                evidence.append("相似参考件存在不同零件类别，不能自动确定")
+            elif nearest is not None:
+                hint["candidate"] = nearest["candidate"]
+                status = "CANDIDATE"
+                match_method = "APPROX_APPROVED_REFERENCE_FEATURES"
+                evidence.append(
+                    f"已批准参考形状特征相似度 {nearest['score']:.3f}；"
+                    "此分数不是身份准确率，仍需人工确认"
+                )
+            elif hint["candidate"]:
+                status = "CANDIDATE"
+                evidence.append("形态相似不等于实际功能；不自动赋材料")
         results.append({
             "solid_id": solid_id,
             "identity": identity,
