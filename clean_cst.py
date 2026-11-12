@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""CST 工程零体积清理：只需要输入 .cst 和输出 .cst 两个参数。
+r"""CST 工程零体积清理：只需要输入 .cst 和输出 .cst 两个参数。
 
     python clean_cst.py "D:\models\original.cst" "D:\models\cleaned.cst"
 
@@ -16,7 +16,7 @@ from pathlib import Path
 # Run from any working directory; do not require pip install, uv, or reports.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from cst_material.simple_cleanup import clean_project  # noqa: E402
+from cst_material.simple_cleanup import clean_project
 
 
 def clean_cst(input_cst: str | Path, output_cst: str | Path) -> dict:
@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = clean_cst(args.input_cst, args.output_cst)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CST vendor-specific exceptions
         print(f"失败：{type(exc).__name__}: {exc}", file=sys.stderr)
         print("原工程未作为删除目标；请查看新工程同名 .cleanup.json 日志。", file=sys.stderr)
         return 1
