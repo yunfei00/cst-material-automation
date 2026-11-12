@@ -286,7 +286,7 @@ def validate_plan_for_apply(plan: dict, source: Path) -> tuple[list[str], int]:
         )
     original_count = plan.get("source_solid_count")
     if isinstance(original_count, bool) or not isinstance(original_count, int):
-        raise ValueError("清理方案 Solid 数量字段无效")
+        raise TypeError("清理方案 Solid 数量字段无效")
     if plan.get("delete_count") != len(ids) or original_count <= len(ids):
         raise ValueError("清理方案删除数量异常")
     if set(ids) & set(_str_array(plan.get("protected_ids"), "protected_ids")):
