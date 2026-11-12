@@ -118,6 +118,22 @@ def process_project(
         report["needs_review_ids"] = planned["unknown_ids"]
         report["material_change_count"] = len(planned["assignments"])
 
+        # Keep the standalone 3D viewer useful without reopening CST or
+        # loading the full analysis log. The viewer can show identity evidence.
+        recognized_by_id = {x["solid_id"]: x for x in recognized}
+        material_by_id = {x["solid_id"]: x for x in planned["decisions"]}
+        for row in catalog["records"]:
+            name = row["solid_id"]
+            item = recognized_by_id[name]
+            row["part_type"] = item["identity"]
+            row["identity_status"] = item["status"]
+            row["candidate"] = item["candidate"]
+            row["identity_evidence"] = item["evidence"]
+            row["material_decision"] = material_by_id[name]
+        (cache / "catalog.json").write_text(
+            json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
         report["stage"] = "WRITE_AND_VERIFY_CST"
         if planned["assignments"]:
             _apply_verified_assignments(staged_cst, dst, planned["assignments"])
