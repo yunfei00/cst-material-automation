@@ -1,6 +1,6 @@
-# P4-C：CST 结构清理预览——辅助件、变体与零体积复核
+# P4-C：CST 结构清理——规则 R001（体积为 0 的 Solid 全部删除）
 
-> **只读预览阶段**。不在 CST 中删除任何对象，不修改工程或材料，不能把 `Solid.GetVolume=0` 作为自动删除条件。原始 CST、P1/P3-A 报告仅在本地使用；公司工程和模型特征不上传公共 GitHub。
+> **已确认规则 R001（2026-11-12）：** 对 P3-A 实测 `Solid.GetVolume = 0` 的**所有 Solid**执行删除，不区分表面积、材质、名字或组件；其余 Solid 不因体积规则被删除。`cleanup-plan` 只读生成完整清单；`cleanup-apply` 仅在明确指定的新 `.cst` 副本执行 `Solid.Delete` 并回读。**源工程不修改；真实 CST 删除执行尚待实机验收。** 公司工程与报告不上传公共 GitHub。
 
 ## 1. 从结构导入产生的常见待审查对象
 
@@ -14,21 +14,21 @@
 
 **仅凭这次上传/导入的几何文件列表，工具无法事先知道哪些一定是辅助件。** 当前做法用名称提示“待审核”，不触发实际删除。对于摄像头连接器或金属外壳，在电磁仿真中可能构成散射体、屏蔽结构、接地或耦合路径。
 
-## 2. 体积为零意味着什么？
+## 2. 已确定的规则 R001：V = 0 全删
 
-P3-A 返回 `volume_project_unit3`、`area_project_unit2` 和 `zero_volume`。我们将其划为以下**只读复核标签**：
+P3-A 返回 `volume_project_unit3`、`area_project_unit2` 和 `zero_volume`。删除判定只依据实测 **`volume_project_unit3 == 0`**（精确等于 0，不设置阈值），具体如下：
 
 | 数据组合 | 可能几何类型 | 输出标签 | 处理 |
 | --- | --- | --- | --- |
-| `V = 0, A > 0` | Sheet、面、未封闭壳体、零厚度金属层或有问题的导入模型 | `ZERO_VOLUME_POSITIVE_AREA_KEEP_REVIEW` | 默认保留并审查物理作用 |
-| `V = 0, A = 0` | 线/点/退化几何、导入失败或数值异常 | `ZERO_VOLUME_ZERO_AREA_DIAGNOSE` | 优先诊断，但绝不直接删除 |
-| `V > 0` | 具有非零体积的结构 | 不生成零体积标签 | 继续按仿真目标审查 |
+| `V = 0, A > 0` | 任意对象 | `R001_ZERO_VOLUME` | **删除** |
+| `V = 0, A = 0` | 任意对象 | `R001_ZERO_VOLUME` | **删除** |
+| `V > 0` | 任意对象 | 不命中 R001 | **保留**，除非有其他显式规则 |
 
-注意：数值“0”可能与几何退化、导入误差和单位/精度有关，不能从数值反推出唯一的 CST 几何类别。零厚度导电面、屏蔽面或边界结构可能十分重要。非紧包围盒尺寸也不能提供准确厚度。
+**规则优先级：** R001 已由工程师确认；名称提示仅用于其他规则的审查，不会对零体积删除做豁免。
 
 ## 3. 确定规则怎么表达？
 
-本轮 **仅生成候选删除清单，不执行 CST 删除**。规则是本地 JSON：
+`cleanup-plan` 会自动将全部 R001 命中的 Solid 加入 `zero_volume_delete_ids` 和 `delete_ids`。其他删除项仍用本地 JSON 显式指定，格式为：
 
 ```json
 {
@@ -84,6 +84,7 @@ $r = Get-Content -LiteralPath $outputFile -Raw -Encoding UTF8 | ConvertFrom-Json
 [PSCustomObject]@{
   Status = $r.status
   OriginalSolidCount = $r.source_solid_count
+  RuleR001DeleteCount = $r.zero_volume_delete_count
   PlannedDeleteCount = $r.delete_count
   ReviewSuggestionCount = $r.review_suggestion_count
   ZeroVolumeCount = $r.zero_volume_review_count
@@ -93,14 +94,12 @@ $r = Get-Content -LiteralPath $outputFile -Raw -Encoding UTF8 | ConvertFrom-Json
 } | Format-List
 ```
 
-CLI 只输出摘要，详情留在本机 JSON，不能将几千个 Solid 名称/位置上传到 GitHub。默认没有规则输入时，**`delete_count=0`，所有对象保留**。
+CLI 只输出摘要，详情留在本机 JSON；**即使没有其他规则文件，`delete_count` 也等于 R001 命中的零体积 Solid 数量**。此步骤不执行修改。
 
-## 5. 下一阶段的真实删除安全门槛
+## 5. 执行规则 R001：只修改新 CST 副本
 
-1. 工程师确认仿真范围与必须保留的电磁关键结构（USB、连接器、屏蔽、接地、天线等）。
-2. 人工选出真正无用的完整 Solid ID，并明确每个变体组保留的实体。
-3. 基于实际 CST 2025 官方文档验证安全删除接口、CST History/依赖关系和兼容性；先针对少量虚构/非生产模型做真实删除测试。
-4. **只操作新工程副本**，不覆盖源文件。对删除前后 Solid ID 集合和剩余材料进行回读验证，数量与预期完全一致才算 PASS。
-5. 再检查 CST 的端口、激励、边界条件、网格和仿真结果是否仍有效。**仅 Solid 数量正确不代表仿真正确。**
-
-目前这一步**没有执行删除**，没有把 `V=0` 转换为确定可删条件。
+1. 官方 CST 2025 离线帮助 `VBA_3D / Solid Object` 已核实 `Solid.Delete(solidname)` 方法。代码使用精确 Solid ID 调用，而不是删除 Component。
+2. `cleanup-apply` 先比对源工程 SHA256、P1 实体与材料、P3-A 几何报告指纹和 R001 覆盖率；不一致拒绝执行。
+3. 在**新工程副本**中调用 `Solid.Delete`，保存后重新打开，对所有剩余 Solid ID 与材料逐项核对；原工程绝不覆盖。
+4. 如失败，不报告 PASS；副本可能保留供本机排查。**CI 模拟验收不能代替真实 CST 实机验证**。
+5. 实机首次验证可先使用非生产工程，核对删除前后视图和端口/仿真设置；这不改变已确认的 R001 判断条件。
