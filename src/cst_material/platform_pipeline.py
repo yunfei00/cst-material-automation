@@ -24,9 +24,14 @@ from cst_material.solid_recognition import load_knowledge, recognize_catalog
 
 def _default_knowledge_file(source: Path) -> Path | None:
     """Existing optional local knowledge file, no setup step required."""
+    source_hash = sha256_file(source)
     project_file = source.parent / "approved_knowledge.json"
-    shared_file = Path.home() / ".cst_material_automation" / "approved_knowledge.json"
-    for candidate in (project_file, shared_file):
+    per_project = (
+        Path.home() / ".cst_material_automation"
+        / f"approved_knowledge_{source_hash}.json"
+    )
+    legacy_global = Path.home() / ".cst_material_automation" / "approved_knowledge.json"
+    for candidate in (project_file, per_project, legacy_global):
         if candidate.is_file():
             return candidate
     return None
