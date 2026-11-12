@@ -9,6 +9,7 @@ from cst_material.cst_bindings import (
     binding,
     material_exists,
     read_assigned_materials,
+    read_material_catalog,
     read_shape_catalog,
 )
 
@@ -18,14 +19,7 @@ class FakeModel:
         self.scripts = []
 
     def get_tree_items(self):
-        return [
-            "Components",
-            r"Components\main",
-            r"Components\main\solid1",
-            "Materials",
-            r"Materials\Copper",
-            r"Materials\Vacuum",
-        ]
+        raise AssertionError("get_tree_items must not be called")
 
     def add_to_history(self, header, vba):
         self.scripts.append((header, vba))
@@ -36,10 +30,21 @@ class FakeProject:
         self.model3d = FakeModel()
 
 
-def test_tree_lists_existing_solids_and_materials():
-    inv = read_inventory(FakeProject(), binding())
-    assert [s.identifier for s in inv.solids] == ["main:solid1"]
-    assert [m.name for m in inv.materials] == ["Copper", "Vacuum"]
+def test_vba_lists_existing_solids_and_materials(monkeypatch):
+    p = FakeProject()
+    import cst_material.cst_bindings as module
+
+    monkeypatch.setattr(module, "read_shape_catalog", lambda project: {
+        "main:solid1": "Copper",
+        "main:solid2": "Vacuum",
+    })
+    monkeypatch.setattr(
+        module, "read_material_catalog", lambda project: ("Copper", "Vacuum")
+    )
+    inv = read_inventory(p, binding())
+    assert [solid.identifier for solid in inv.solids] == ["main:solid1", "main:solid2"]
+    assert [solid.material for solid in inv.solids] == ["Copper", "Vacuum"]
+    assert [mat.name for mat in inv.materials] == ["Copper", "Vacuum"]
 
 
 def test_change_material_uses_cst_vba():
@@ -77,9 +82,11 @@ def test_query_checks_written_file(monkeypatch):
     }
 
 
-def test_tree_empty_fails_closed():
+def test_vba_empty_solid_catalog_fails_closed(monkeypatch):
     p = FakeProject()
-    p.model3d.get_tree_items = list
+    import cst_material.cst_bindings as module
+
+    monkeypatch.setattr(module, "read_shape_catalog", lambda project: {})
     with pytest.raises(RuntimeError, match="Solid"):
         read_inventory(p, binding())
 
@@ -153,3 +160,36 @@ def test_material_exists_rejects_invalid_query_result(monkeypatch):
     monkeypatch.setattr(p.model3d, "add_to_history", write_invalid)
     with pytest.raises(RuntimeError, match="异常"):
         material_exists(p, "Copper")
+
+
+def test_documented_vba_material_catalog(monkeypatch):
+    p = FakeProject()
+
+    def write_materials(header, script):
+        path_line = next(line for line in script.splitlines() if line.startswith("Open "))
+        import re
+
+        match = re.match(r'Open "(.+)" For Output As #fh', path_line)
+        assert match
+        assert "Material.GetNumberOfMaterials" in script
+        assert "Material.GetNameOfMaterialFromIndex(i)" in script
+        Path(match.group(1)).write_text("2\nCopper\nVacuum\n", encoding="utf-8")
+
+    monkeypatch.setattr(p.model3d, "add_to_history", write_materials)
+    assert read_material_catalog(p) == ("Copper", "Vacuum")
+
+
+def test_vba_material_catalog_rejects_incomplete_output(monkeypatch):
+    p = FakeProject()
+
+    def write_partial(header, script):
+        path_line = next(line for line in script.splitlines() if line.startswith("Open "))
+        import re
+
+        match = re.match(r'Open "(.+)" For Output As #fh', path_line)
+        assert match
+        Path(match.group(1)).write_text("2\nCopper\n", encoding="utf-8")
+
+    monkeypatch.setattr(p.model3d, "add_to_history", write_partial)
+    with pytest.raises(RuntimeError, match="不完整"):
+        read_material_catalog(p)
