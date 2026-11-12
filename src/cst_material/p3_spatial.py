@@ -11,6 +11,7 @@ Actual COM + RunScript behavior must be validated on real CST 2025 SP1.
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import shutil
@@ -266,6 +267,114 @@ def analyze_neighbors(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
         "analyzed_solid_count": count,
         "neighbors_per_solid": k,
         "neighbors": results,
+    }
+
+
+
+def load_spatial_catalog_from_report(path: Path) -> tuple[SpatialCatalog, dict]:
+    """Reconstruct and revalidate bounds from an existing local P3-C JSON report.
+
+    No CST/COM/file copying is involved. Only PASS/PARTIAL reports with a full
+    spatial feature list are eligible. Old SKIPPED neighbor data is ignored.
+    """
+    path = path.resolve(strict=True)
+    if path.suffix.casefold() != ".json" or not path.is_file():
+        raise ValueError("P3-C 离线分析输入必须是已存在的 .json 报告")
+    source = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(source, dict) or source.get("task") != "spatial":
+        raise ValueError("输入不是 P3-C spatial 查询报告")
+    if source.get("status") not in {"PASS", "PARTIAL"}:
+        raise ValueError("P3-C 原始报告未成功读取完整包围盒，拒绝离线分析")
+    payload = source.get("spatial")
+    if not isinstance(payload, dict):
+        raise ValueError("P3-C 报告缺少 spatial 结果")
+    try:
+        solid_count = payload["solid_count"]
+        unit = payload["length_unit"]
+        to_m = float(payload["length_unit_to_m"])
+        items = payload["features"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("P3-C 报告缺少完整的长度单位或 Solid 字段") from exc
+    if (
+        not isinstance(solid_count, int)
+        or isinstance(solid_count, bool)
+        or solid_count <= 0
+        or not isinstance(items, list)
+        or len(items) != solid_count
+    ):
+        raise ValueError("P3-C 报告的 Solid 数量或数据列表不完整")
+    if unit not in {"nm", "um", "mm", "cm", "m", "mil", "in", "ft"}:
+        raise ValueError(f"P3-C 报告的长度单位未知：{unit!r}")
+    if not math.isfinite(to_m) or to_m <= 0:
+        raise ValueError("P3-C 报告长度单位换算系数不合法")
+    features = []
+    names = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("P3-C 报告包含格式不正确的 Solid 条目")
+        name = item.get("identifier")
+        if not isinstance(name, str) or not name or name in names:
+            raise ValueError("P3-C 报告含空 Solid 名称或重复名称")
+        names.add(name)
+        component = item.get("component")
+        material = item.get("material")
+        if component is not None and not isinstance(component, str):
+            raise ValueError(f"Solid {name!r} 的 Component 类型不正确")
+        if material is not None and not isinstance(material, str):
+            raise ValueError(f"Solid {name!r} 的 Material 类型不正确")
+        raw_bounds = item.get("loose_bounds")
+        if raw_bounds is None:
+            bounds = dims = mid = smallest = None
+        else:
+            if not isinstance(raw_bounds, dict):
+                raise ValueError(f"Solid {name!r} 的包围盒格式不正确")
+            try:
+                vals = {
+                    key: _number(str(raw_bounds[key]), f"{name} 的 {key}")
+                    for key in ("xmin", "ymin", "zmin", "xmax", "ymax", "zmax")
+                }
+            except KeyError as exc:
+                raise ValueError(f"Solid {name!r} 的包围盒缺少坐标") from exc
+            try:
+                bounds = BoundingBox(**vals)
+            except ValueError as exc:
+                raise ValueError(f"Solid {name!r} 的包围盒坐标顺序错误") from exc
+            dims = bounds.dimensions
+            mid = (
+                (bounds.xmin + bounds.xmax) / 2,
+                (bounds.ymin + bounds.ymax) / 2,
+                (bounds.zmin + bounds.zmax) / 2,
+            )
+            if not all(math.isfinite(v) for v in (*dims, *mid)):
+                raise ValueError(f"Solid {name!r} 的包围盒数值超出范围")
+            smallest = min(dims)
+        features.append(
+            SpatialFeature(
+                identifier=name,
+                component=component,
+                material=material,
+                loose_bounds=bounds,
+                dimensions_project_unit=dims,
+                bbox_midpoint_project_unit=mid,
+                min_bbox_extent_project_unit=smallest,
+            )
+        )
+    missing = sum(f.loose_bounds is None for f in features)
+    if payload.get("missing_bbox_count") != missing:
+        raise ValueError("P3-C 报告缺失包围盒数量与实际记录不一致")
+    catalog = SpatialCatalog(
+        length_unit=unit,
+        length_unit_to_m=to_m,
+        declared_solid_count=solid_count,
+        features=tuple(features),
+        missing_bbox_count=missing,
+        cleanup_deferred=bool(payload.get("cleanup_deferred", False)),
+        cleanup_path=payload.get("cleanup_path"),
+    )
+    return catalog, {
+        "original_status": source["status"],
+        "original_cleanup_deferred": catalog.cleanup_deferred,
+        "original_missing_bbox_count": missing,
     }
 
 
