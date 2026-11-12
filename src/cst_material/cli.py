@@ -14,6 +14,7 @@ from cst_material.cst_api import assign_and_verify, connect, read_inventory
 from cst_material.cst_bindings import binding
 from cst_material.p3_geometry import read_geometry_features
 from cst_material.p3_mtd_catalog import scan_mtd_library
+from cst_material.p3_spatial import query_spatial_from_copy, summarize_spatial
 
 
 def _report(path: Path, data: dict) -> None:
@@ -130,6 +131,15 @@ def _run_mtd_scan(library_root: Path, report_path: Path, output: dict) -> None:
     output["stage"] = "P3-B MTD 文件目录建立完成"
 
 
+def _run_spatial(args: argparse.Namespace, output: dict) -> None:
+    """P3-C: experiment with official OLE RunScript, never CST History."""
+    output["stage"] = "CST P3-C 非 History OLE 命令宏空间查询"
+    catalog = query_spatial_from_copy(Path(args.source), timeout=args.timeout)
+    output["spatial"] = summarize_spatial(catalog, args.neighbors)
+    output["status"] = "PARTIAL" if catalog.missing_bbox_count else "PASS"
+    output["stage"] = "P3-C 空间查询完成"
+
+
 def _mapping(args: argparse.Namespace) -> dict[str, str]:
     result: dict[str, str] = {}
     if args.mapping:
@@ -200,6 +210,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p3b.add_argument("--library-root", required=True, help="外部材料库目录")
     p3b.add_argument("--report", default="local-data/P3B_MTD_Catalog.json")
+    p3c = commands.add_parser(
+        "spatial", help="P3-C（实验性）：用 CST OLE 命令宏查询非紧包围盒"
+    )
+    p3c.add_argument("--source", required=True, help="已有 CST 工程的绝对路径")
+    p3c.add_argument("--report", default="local-data/P3C_Spatial_Report.json")
+    p3c.add_argument("--timeout", type=int, default=240, help="COM/VBA 查询超时，秒")
+    p3c.add_argument("--neighbors", type=int, default=5, help="每个 Solid 最近的包围盒候选数量 0～20")
     args = parser.parse_args(argv)
     # A typo in --report must never overwrite an engineering project or MTD.
     # This also covers the P1/P2 report commands without altering workflows.
@@ -228,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
             _run_assign(args, output)
         elif args.command == "geometry":
             _run_geometry(Path(args.source), output)
+        elif args.command == "spatial":
+            _run_spatial(args, output)
         else:
             _run_mtd_scan(Path(args.library_root), Path(args.report), output)
     except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
