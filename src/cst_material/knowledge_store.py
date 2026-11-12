@@ -39,7 +39,7 @@ def store_confirmation(
     target = (
         Path(knowledge_path).expanduser()
         if knowledge_path is not None
-        else Path.home() / ".cst_material_automation" / "approved_knowledge.json"
+        else Path.home() / ".cst_material_automation" / f"approved_knowledge_{source_hash}.json"
     )
     if target.is_file():
         knowledge = load_knowledge(target)
