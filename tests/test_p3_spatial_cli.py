@@ -154,7 +154,9 @@ def test_com_failure_not_masked_by_winerror32_during_cleanup(tmp_path, monkeypat
     monkeypatch.setattr(p3_spatial.shutil, "rmtree", locked_cleanup)
     monkeypatch.setattr(p3_spatial.time, "sleep", lambda _seconds: None)
 
-    with pytest.warns(RuntimeWarning, match="仍被占用"):
-        with pytest.raises(RuntimeError, match="CST real macro error"):
-            p3_spatial.query_spatial_from_copy(project)
+    with (
+        pytest.warns(RuntimeWarning, match="仍被占用"),
+        pytest.raises(RuntimeError, match="CST real macro error"),
+    ):
+        p3_spatial.query_spatial_from_copy(project)
     assert project.read_bytes() == b"unchanged"
