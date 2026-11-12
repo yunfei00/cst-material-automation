@@ -44,9 +44,14 @@ def _load_json(path: Path, task: str, statuses: set[str]) -> dict:
 
 def _same_source(a: object, b: object, title: str) -> None:
     """Check when both paths exist; same path alone does not prove same version."""
-    if isinstance(a, str) and a and isinstance(b, str) and b:
-        if ntpath.normcase(ntpath.normpath(a)) != ntpath.normcase(ntpath.normpath(b)):
-            raise ValueError(f"{title} 来源文件路径不同，不能混合工程的特征")
+    if (
+        isinstance(a, str)
+        and a
+        and isinstance(b, str)
+        and b
+        and ntpath.normcase(ntpath.normpath(a)) != ntpath.normcase(ntpath.normpath(b))
+    ):
+        raise ValueError(f"{title} 来源文件路径不同，不能混合工程的特征")
 
 
 def _read_geometry_report(path: Path) -> tuple[dict, dict]:
@@ -178,10 +183,9 @@ def build_structure_report(
 ) -> dict:
     """Combine existing, independently generated local reports; no CST calls."""
     geometry_root, geometry = _read_geometry_report(geometry_path)
-    catalog, spatial_provenance = read_spatial_report(spatial_path)
+    catalog, _ = read_spatial_report(spatial_path)
     # P3-A and P3-C are allowed in different project length units if their
     # SI conversion is valid; ratios use one catalog at a time.
-    _same_source(geometry_root.get("source"), spatial_provenance.get("source"), "P3-A/P3-C")
     # P3-C query stores source in its top-level JSON, not read_spatial_report().
     spatial_root = _load_json(spatial_path, "spatial", {"PASS", "PARTIAL"})
     _same_source(geometry_root.get("source"), spatial_root.get("source"), "P3-A/P3-C")
@@ -209,12 +213,18 @@ def build_structure_report(
     warnings = []
     for solid in sorted(catalog.features, key=lambda f: f.identifier):
         geo = geometry["by_name"][solid.identifier]
-        if solid.component is not None and geo.get("component") is not None:
-            if solid.component != geo["component"]:
-                raise ValueError(f"{solid.identifier} 的 Component 与 P3-A 不同")
-        if solid.material is not None and geo.get("material") is not None:
-            if solid.material != geo["material"]:
-                raise ValueError(f"{solid.identifier} 的材料与 P3-A 不同，拒绝混用数据")
+        if (
+            solid.component is not None
+            and geo.get("component") is not None
+            and solid.component != geo["component"]
+        ):
+            raise ValueError(f"{solid.identifier} 的 Component 与 P3-A 不同")
+        if (
+            solid.material is not None
+            and geo.get("material") is not None
+            and solid.material != geo["material"]
+        ):
+            raise ValueError(f"{solid.identifier} 的材料与 P3-A 不同，拒绝混用数据")
         hint, reason = _shape_hint(solid.dimensions_project_unit)
         counts[hint] += 1
         dims_m = (
