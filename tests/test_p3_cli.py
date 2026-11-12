@@ -76,3 +76,12 @@ def test_geometry_cli_opens_copy_and_does_not_save(tmp_path, monkeypatch):
     assert len(env.opened) == 1 and env.opened[0].closed
     assert source.read_bytes() == b"original-private-binary"
     assert not env.opened[0].path.exists()
+
+
+def test_report_path_must_not_overwrite_cst(tmp_path):
+    source = tmp_path / "existing.cst"
+    source.write_bytes(b"original-critical-bytes")
+    assert cli.main(
+        ["geometry", "--source", str(source), "--report", str(source)]
+    ) == 2
+    assert source.read_bytes() == b"original-critical-bytes"
