@@ -37,7 +37,7 @@ def _delete_solids(project, ids: list[str], batch_size: int = 20) -> None:
                 f"CST cleanup R001 + explicit {start + 1}-{start + len(group)}",
                 code,
             )
-        except Exception as exc:  # noqa: BLE001 - vendor-specific CST errors
+        except Exception as exc:
             raise RuntimeError(
                 f"CST R001 删除批次 {start + 1}～{start + len(group)} 失败，"
                 f"全部计划 {len(ids)} 个 Solid；副本尚未通过验收"
