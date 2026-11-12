@@ -77,8 +77,10 @@ def parse_spatial_data(rows: list[str]) -> SpatialCatalog:
     for index in range(declared):
         if cursor + 2 > len(rows):
             raise RuntimeError(f"P3-C 第 {index + 1}/{declared} 个 Solid 记录不完整")
-        name, state = rows[cursor], rows[cursor + 1].strip()
-        cursor += 2
+        if cursor + 3 > len(rows):
+            raise RuntimeError(f"P3-C 第 {index + 1}/{declared} 个 Solid 材料记录不完整")
+        name, material, state = rows[cursor], rows[cursor + 1], rows[cursor + 2].strip()
+        cursor += 3
         if not name or "\x00" in name or "\r" in name:
             raise RuntimeError(f"P3-C 第 {index + 1} 个 Solid 名称无效")
         if state == "MISSING":
@@ -109,7 +111,7 @@ def parse_spatial_data(rows: list[str]) -> SpatialCatalog:
             SpatialFeature(
                 identifier=name,
                 component=component,
-                material=None,
+                material=material or None,
                 loose_bounds=bounds,
                 dimensions_project_unit=dims,
                 bbox_midpoint_project_unit=mid,
@@ -236,6 +238,7 @@ def build_spatial_macro(result_path: Path) -> str:
             "shapeName = Solid.GetNameOfShapeFromIndex(i)",
             "If Len(shapeName) > 0 Then",
             "Print #fh, shapeName",
+            "Print #fh, Solid.GetMaterialNameForShape(shapeName)",
             "found = Solid.GetLooseBoundingBoxOfShape(shapeName, xmin, xmax, ymin, ymax, zmin, zmax)",
             "If found Then",
             'Print #fh, "OK"',
