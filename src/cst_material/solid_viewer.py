@@ -1,0 +1,223 @@
+"""PySide6 + PyVistaQt 3D Solid browser; no CST process in the GUI.
+
+Only one selected Solid is sent to VTK at a time, avoiding thousands of actors.
+The exact STEP B-rep stays separate from its triangle preview mesh.
+Dependencies are imported at launch so batch Python remains headless.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import tempfile
+import time
+from pathlib import Path
+
+from cst_material.occt_geometry import (
+    classify_point,
+    export_preview_stl,
+    geometry_metrics,
+    read_step,
+)
+from cst_material.solid_index import ensure_preview_mesh, load_catalog
+
+
+def launch_viewer(path: str | Path) -> int:
+    import pyvista as pv
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import (
+        QApplication,
+        QDoubleSpinBox,
+        QFormLayout,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QMainWindow,
+        QPushButton,
+        QSplitter,
+        QTreeWidget,
+        QTreeWidgetItem,
+        QVBoxLayout,
+        QWidget,
+    )
+    from pyvistaqt import QtInteractor
+
+    target = Path(path).resolve(strict=True)
+    if not (target.is_dir() or target.suffix.lower() in {".stp", ".step"}):
+        raise ValueError("请输入 STEP 文件或者已生成的 .geometry 文件夹")
+    app = QApplication.instance() or QApplication([])
+
+    class SolidViewer(QMainWindow):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("CST Solid 三维结构查看器（离线）")
+            self.resize(1450, 850)
+            self.root = target if target.is_dir() else None
+            self.records = []
+            self.active_record = None
+            self.active_solids = None
+            self.tempdir = tempfile.TemporaryDirectory(prefix="cst_viewer_")
+            self.preview_actor = None
+            splitter = QSplitter(Qt.Orientation.Horizontal)
+            self.setCentralWidget(splitter)
+
+            left = QWidget()
+            left_layout = QVBoxLayout(left)
+            left_layout.addWidget(QLabel("Solid 搜索 / 列表"))
+            self.search = QLineEdit()
+            self.search.setPlaceholderText("输入完整 Solid ID 或关键字过滤")
+            left_layout.addWidget(self.search)
+            self.tree = QTreeWidget()
+            self.tree.setHeaderLabels(["Solid ID"])
+            left_layout.addWidget(self.tree)
+            splitter.addWidget(left)
+
+            center = QWidget()
+            center_layout = QVBoxLayout(center)
+            self.plotter = QtInteractor(center)
+            self.plotter.set_background("#17202f")
+            center_layout.addWidget(self.plotter.interactor)
+            splitter.addWidget(center)
+
+            right = QWidget()
+            right_layout = QVBoxLayout(right)
+            right_layout.addWidget(QLabel("几何信息 / 点包含判断"))
+            self.info = QLabel("选择一个 STEP 或 Solid")
+            self.info.setWordWrap(True)
+            self.info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            right_layout.addWidget(self.info)
+            form = QFormLayout()
+            self.x = QDoubleSpinBox()
+            self.y = QDoubleSpinBox()
+            self.z = QDoubleSpinBox()
+            for widget, name in ((self.x, "X (mm)"), (self.y, "Y (mm)"), (self.z, "Z (mm)")):
+                widget.setRange(-1e10, 1e10)
+                widget.setDecimals(7)
+                form.addRow(name, widget)
+            right_layout.addLayout(form)
+            self.check_button = QPushButton("判断点在 Solid 内 / 表面 / 外")
+            right_layout.addWidget(self.check_button)
+            self.answer = QLabel("尚未查询")
+            self.answer.setWordWrap(True)
+            right_layout.addWidget(self.answer)
+            self.reset_button = QPushButton("重置三维视角")
+            right_layout.addWidget(self.reset_button)
+            right_layout.addStretch()
+            splitter.addWidget(right)
+            splitter.setSizes([260, 880, 310])
+
+            self.search.textChanged.connect(self._filter_tree)
+            self.tree.currentItemChanged.connect(self._select_solid)
+            self.check_button.clicked.connect(self._query_point)
+            self.reset_button.clicked.connect(self.plotter.reset_camera)
+
+            if self.root:
+                catalog = load_catalog(self.root)
+                self.records = catalog["records"]
+                for rec in self.records:
+                    item = QTreeWidgetItem([rec["solid_id"]])
+                    self.tree.addTopLevelItem(item)
+                self.statusBar().showMessage(
+                    f"已加载 {len(self.records)} 条 Solid 索引；仅按需读取三维网格"
+                )
+                if self.records:
+                    self.tree.setCurrentItem(self.tree.topLevelItem(0))
+            else:
+                self._display_step(target, {"solid_id": target.name, "step": str(target)})
+
+        def _filter_tree(self, keyword):
+            value = keyword.casefold().strip()
+            for pos in range(self.tree.topLevelItemCount()):
+                item = self.tree.topLevelItem(pos)
+                item.setHidden(value not in item.text(0).casefold())
+
+        def _select_solid(self, item, _previous):
+            if item is None or not self.root:
+                return
+            rec = next((r for r in self.records if r["solid_id"] == item.text(0)), None)
+            if rec is None:
+                return
+            start = time.perf_counter()
+            try:
+                file_path = (self.root / rec["step"]).resolve()
+                mesh_path = ensure_preview_mesh(self.root, rec)
+                self._display_step(file_path, rec, mesh_path)
+                self.statusBar().showMessage(
+                    f"显示 {rec['solid_id']}：{time.perf_counter() - start:.3f}s"
+                )
+            except Exception as exc:
+                self.answer.setText(f"读取失败：{type(exc).__name__}: {exc}")
+
+        def _display_step(self, file_path, rec, mesh_path=None):
+            start = time.perf_counter()
+            solids = read_step(file_path)
+            if mesh_path is None:
+                mesh_path = Path(self.tempdir.name) / "single.stl"
+                mesh_path.unlink(missing_ok=True)
+                export_preview_stl(solids, mesh_path)
+            self.plotter.clear()
+            self.preview_actor = self.plotter.add_mesh(
+                pv.read(str(mesh_path)), color="#73a9d6", pickable=True
+            )
+            self.active_solids = solids
+            self.active_record = rec
+            self.plotter.view_isometric()
+            self.plotter.reset_camera()
+            self.plotter.enable_mesh_picking(
+                callback=self._on_picked, show=False, left_clicking=True
+            )
+            feats = rec.get("features") or geometry_metrics(solids)
+            self.info.setText(
+                f"Solid ID: {rec['solid_id']}\n"
+                f"体积: {feats['volume_mm3']:.6g} mm³\n"
+                f"面积: {feats['surface_mm2']:.6g} mm²\n"
+                f"面数: {feats['face_count']}；边数: {feats['edge_count']}\n"
+                f"外形尺寸: {feats['dimensions_mm']}\n"
+                f"读取/显示: {time.perf_counter() - start:.3f} s"
+            )
+            self.answer.setText("请输入 XYZ，判断是否在精确 B-rep 实体内部。")
+
+        def _on_picked(self, _picked):
+            if self.preview_actor is None:
+                return
+            self.preview_actor.GetProperty().SetColor(1.0, 0.65, 0.1)
+            self.plotter.render()
+            self.answer.setText(
+                f"三维选中 Solid: {self.active_record['solid_id']}"
+            )
+
+        def _query_point(self):
+            if self.active_solids is None:
+                self.answer.setText("请先选择 Solid")
+                return
+            point = (self.x.value(), self.y.value(), self.z.value())
+            try:
+                result = classify_point(self.active_solids, point)
+                self.plotter.add_points(
+                    [point], color="#ff7043", point_size=16,
+                    render_points_as_spheres=True, name="query_point",
+                )
+                self.answer.setText(
+                    f"精确实体判断：{result}\n点坐标(mm)：{point}"
+                )
+            except Exception as exc:
+                self.answer.setText(f"查询失败：{type(exc).__name__}: {exc}")
+
+        def closeEvent(self, event):
+            self.plotter.close()
+            self.tempdir.cleanup()
+            super().closeEvent(event)
+
+    win = SolidViewer()
+    win.show()
+    return app.exec()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="CST Solid 离线三维查看器")
+    parser.add_argument("path", help="一个 STEP/STP 文件或一个 .geometry 目录")
+    args = parser.parse_args(argv)
+    return launch_viewer(args.path)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
