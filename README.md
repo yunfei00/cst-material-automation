@@ -17,7 +17,7 @@
 | 代码 | 用途 |
 | --- | --- |
 | `src/cst_material/cst_api.py` | CST 连接、读取、材料赋值保存与回读工作流 |
-| `src/cst_material/cst_bindings.py` | CST 三维模型树读取和 VBA Solid 材料方法适配 |
+| `src/cst_material/cst_bindings.py` | CST VBA Solid/Material 枚举、材料查询与赋值适配 |
 | `src/cst_material/cli.py` | P1 `inventory` / P2 `assign` 可执行命令 |
 | `src/cst_material/domain.py` | Solid、Material、BoundingBox 类型 |
 | `tests/test_cst_api.py`、`tests/test_cst_bindings.py` | 无需 CST 的单元测试 |
@@ -27,11 +27,11 @@
 
 - `cst.interface.DesignEnvironment()`
 - `env.open_project(path)`
-- `project.model3d.get_tree_items()`
+- `project.model3d.get_tree_items()`（存在已复现的中文编码兼容问题，当前已停用）
 - `project.model3d.add_to_history(header, vba_code)`
 - `project.save(path, allow_overwrite=True)`、`project.close()`
 
-CST 2025 完整 Online Help 已确认三维 VBA 官方接口：`Solid.GetNumberOfShapes`、`Solid.GetNameOfShapeFromIndex`、`Solid.GetMaterialNameForShape`、`Solid.ChangeMaterial`、`Material.Exists`。P1 在临时工程副本中用官方 VBA 结果交叉验证 Python 工程树；P2 在副本上赋值并回读。接口签名已有文档依据，但完整真实工程行为仍需 Windows CST 2025 SP1 实机验收。
+CST 2025 完整 Online Help 已确认三维 VBA 官方接口：`Solid.GetNumberOfShapes`、`Solid.GetNameOfShapeFromIndex`、`Solid.GetMaterialNameForShape`、`Solid.ChangeMaterial`、`Material.GetNumberOfMaterials`、`Material.GetNameOfMaterialFromIndex`、`Material.Exists`。针对真实工程中 `get_tree_items()` 触发 `UnicodeDecodeError`（`0xB2`）的问题，**P1/P2 已改为直接使用官方 VBA 枚举 Solid 和 Material**；VBA 文件输出按 Windows 本机 ANSI 代码页读取。P2 查询后恢复干净工程副本，仅把实际材料修改写入最终输出工程。接口签名已有文档依据，但修复后的真实 Windows CST 2025 SP1 运行行为仍需实机验收。
 
 **状态：接口适配代码与 CLI 已提交，尚未完成 CST 2025 SP1 真实工程验收。GitHub CI 仅证明无 CST 的模拟测试通过，不能代替真实验收。**
 
