@@ -61,7 +61,7 @@ GUI 与处理引擎互相独立；即使不安装 Qt，后台 Python 流程仍�
 | M1 精确几何 | `occt_geometry.py` / `spatial_query.py` | 合成 STEP 实体、孔洞点包含、包围盒预筛、网格缓存、重复点查询 | 真实弹片 STEP 的几何有效性、单位、速度 |
 | M2 3D 查看 | `solid_viewer.py` / `view_solids.py` | 模块的无 GUI 导入与依赖隔离 | GUI 启动、旋转/缩放/高亮、实际帧率与点击结果 |
 | M3 导出/映射 | `cst_step_export.py` / `solid_index.py` | 假 CST 环境导出真实合成 STEP；Solid ID 及 SHA 映射 | **CST 2025 STEP.Write VBA 命令真实运行**；原坐标、单位、7k 规模 |
-| M4 身份识别 | `solid_recognition.py` | 薄壁弯折候选、人工批准和参考 SHA 完全一致匹配、冲突阻断 | 真实弹片/非弹片标注数据及识别准确率 |
+| M4 身份识别 | `solid_recognition.py` | 薄壁弯折候选、已批准参考 CAD 几何特征相似度（仅作为待确认候选）、人工批准和参考 SHA 完全一致匹配、冲突阻断 | 真实弹片/非弹片标注数据及识别准确率 |
 | M5 自动赋材 | `material_matching.py` / `platform_pipeline.py` / `run_project.py` | 完整合成流程、NEEDS_REVIEW、材料审批规则 | 公司工程 R001 删除、真实 CST 材料赋值并回读、模型有效性 |
 
 ### 为什么目前还不能说五阶段已经「真实完成」
@@ -95,6 +95,7 @@ M3 的单 Solid STEP VBA 导出仍是**有文档依据的实现候选**，没有
 - `material` 必须与工程中已有的 CST Material 名称一致；否则赋材失败而不是自行新增/猜测。
 - 对于相同组件中的多个 Solid，应分别确认子结构材料。
 - 没有知识库或证据不足时，仅产生 `CANDIDATE / UNKNOWN`，**不自动赋材**。
+- 可以在 `reference_shapes` 中保存工程师批准的参考 CAD 特征（`features` 取自索引），系统通过尺寸、体积、面积和曲面分布给出**相似零件候选**。相似分数不是识别准确率，几何近似匹配**绝不触发自动赋材**；仅原工程指纹匹配且人工批准，或字节完全一致的已批准 CAD 参考模型，可进入已确认身份流程。
 
 ## E. PySide6 三维查看器使用
 
