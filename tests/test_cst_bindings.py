@@ -151,7 +151,7 @@ def test_material_exists_via_official_vba(monkeypatch, vba_value, expected):
         match = re.match(r'Open "(.+)" For Output As #fh', path_line)
         assert match
         assert 'Material.Exists("Copper")' in script
-        Path(match.group(1)).write_text(vba_value + "\\n", encoding="utf-8")
+        Path(match.group(1)).write_text(vba_value + "\n", encoding="utf-8")
 
     monkeypatch.setattr(p.model3d, "add_to_history", write_result)
     assert material_exists(p, "Copper") is expected
