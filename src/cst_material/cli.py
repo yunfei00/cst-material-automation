@@ -12,6 +12,8 @@ from pathlib import Path
 
 from cst_material.cst_api import assign_and_verify, connect, read_inventory
 from cst_material.cst_bindings import binding
+from cst_material.p3_geometry import read_geometry_features
+from cst_material.p3_mtd_catalog import scan_mtd_library
 
 
 def _report(path: Path, data: dict) -> None:
@@ -62,6 +64,70 @@ def _run_inventory(source: Path, output: dict) -> None:
             env.close()
     output["status"] = "PARTIAL" if output.get("warnings") else "PASS"
     output["stage"] = "读取完成"
+
+
+def _run_geometry(source: Path, output: dict) -> None:
+    """P3-A. Only the disposable CST project copy is opened or queried."""
+    if not source.is_file() or source.suffix.lower() != ".cst":
+        raise ValueError("P3-A 输入必须是已有的 .cst 工程文件")
+    output["stage"] = "创建 P3 几何查询临时工程副本"
+    with tempfile.TemporaryDirectory(prefix="cst_p3_geometry_") as tmp:
+        copied = Path(tmp) / source.name
+        shutil.copy2(source, copied)
+        output["stage"] = "连接 CST Python 接口"
+        env = connect()
+        try:
+            output["stage"] = "打开 P3 临时工程副本"
+            project = env.open_project(str(copied))
+            try:
+                output["stage"] = "CST VBA 读取 Solid 和 Material"
+                inventory = read_inventory(project, binding())
+                output["stage"] = "CST VBA 查询 Solid 体积与表面积"
+                catalog = read_geometry_features(project, inventory)
+                output["geometry"] = {
+                    "length_unit": catalog.length_unit,
+                    "length_unit_to_m": catalog.length_unit_to_m,
+                    "features": [asdict(item) for item in catalog.features],
+                }
+                output["solid_count"] = len(catalog.features)
+                output["zero_volume_count"] = sum(
+                    item.zero_volume for item in catalog.features
+                )
+                output["geometry_scope"] = (
+                    "仅体积、表面积和紧致度；CST 官方禁止在 History "
+                    "中调用 GetLooseBoundingBoxOfShape，故未查询尺寸与位置"
+                )
+            finally:
+                project.close()
+        finally:
+            env.close()
+    output["status"] = "PASS"
+    output["stage"] = "P3-A 几何数据读取完成"
+
+
+def _run_mtd_scan(library_root: Path, report_path: Path, output: dict) -> None:
+    """P3-B. File metadata only; never open CST or modify external materials."""
+    output["stage"] = "扫描外部 MTD 材料库"
+    root = library_root.resolve(strict=True)
+    if report_path.resolve().is_relative_to(root):
+        raise ValueError("报告路径不能放在外部 MTD 材料库内部，避免修改材料库")
+    catalog = scan_mtd_library(root)
+    output["root"] = catalog.root
+    output["mtd_count"] = len(catalog.entries)
+    output["files"] = [asdict(entry) for entry in catalog.entries]
+    output["duplicate_candidate_names"] = catalog.duplicate_candidate_names
+    output["skipped_symlinks"] = catalog.skipped_symlinks
+    output["catalog_scope"] = (
+        "仅文件名候选、相对路径、大小、修改时间与 SHA256；"
+        "不解析 MTD 物性，不保证文件名等于 CST 内部材料名称，"
+        "不会导入 CST 工程"
+    )
+    if catalog.duplicate_candidate_names:
+        output["warnings"] = ["发现同名候选材料文件，后续匹配必须人工确认"]
+    if catalog.skipped_symlinks:
+        output.setdefault("warnings", []).append("已跳过符号链接，避免扫描到库外")
+    output["status"] = "PASS"
+    output["stage"] = "P3-B MTD 文件目录建立完成"
 
 
 def _mapping(args: argparse.Namespace) -> dict[str, str]:
@@ -124,17 +190,46 @@ def main(argv: list[str] | None = None) -> int:
     p2.add_argument("--material", help="来自 P1 的材料名称")
     p2.add_argument("--mapping", help="JSON 文件，键为 Solid.identifier，值为已有材料名称")
     p2.add_argument("--report", default="local-data/P2_Report.json")
+    p3a = commands.add_parser(
+        "geometry", help="P3-A：只读提取已有 CST 工程 Solid 体积/表面积"
+    )
+    p3a.add_argument("--source", required=True, help="已有 CST 工程的绝对路径")
+    p3a.add_argument("--report", default="local-data/P3A_Geometry_Report.json")
+    p3b = commands.add_parser(
+        "scan-mtd", help="P3-B：只读扫描外部 .mtd 材料库文件信息（不导入 CST）"
+    )
+    p3b.add_argument("--library-root", required=True, help="外部材料库目录")
+    p3b.add_argument("--report", default="local-data/P3B_MTD_Catalog.json")
     args = parser.parse_args(argv)
+    # A typo in --report must never overwrite an engineering project or MTD.
+    # This also covers the P1/P2 report commands without altering workflows.
+    report_file = Path(args.report).resolve()
+    if report_file.suffix.casefold() in {".cst", ".mtd", ".sat", ".brd", ".step", ".stp"}:
+        print("拒绝将 JSON 报告写入工程/材料文件路径", file=sys.stderr)
+        return 2
+    if args.command == "scan-mtd":
+        # Reject unsafe output *before* the generic error reporter writes a
+        # FAIL JSON to the same path. Never write into an MTD library.
+        library_root = Path(args.library_root).resolve()
+        report_file = Path(args.report).resolve()
+        if report_file.is_relative_to(library_root):
+            print("拒绝将报告写入材料库内部；请选择 local-data 目录", file=sys.stderr)
+            return 2
+    source = args.library_root if args.command == "scan-mtd" else args.source
     output: dict = {
         "task": args.command,
-        "source": str(Path(args.source).resolve()),
+        "source": str(Path(source).resolve()),
         "status": "FAIL",
     }
     try:
         if args.command == "inventory":
             _run_inventory(Path(args.source), output)
-        else:
+        elif args.command == "assign":
             _run_assign(args, output)
+        elif args.command == "geometry":
+            _run_geometry(Path(args.source), output)
+        else:
+            _run_mtd_scan(Path(args.library_root), Path(args.report), output)
     except Exception as exc:  # noqa: BLE001 - CST raises vendor-specific exceptions
         output["error"] = f"{type(exc).__name__}: {exc}"
         # The full Python traceback is only written to the local report in
