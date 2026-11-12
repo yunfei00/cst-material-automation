@@ -10,8 +10,9 @@ class ModelWithInvalidEncoding:
 
     def add_to_history(self, title, commands):
         raise UnicodeDecodeError(
-            "utf-8", b"before\\xb2after", 6, 7, "invalid start byte"
+            "utf-8", b"before\xb2after", 6, 7, "invalid start byte"
         )
+
 
 class FakeProject:
     model3d = ModelWithInvalidEncoding()
