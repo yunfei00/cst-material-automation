@@ -77,6 +77,7 @@ def recognize_catalog(catalog: dict, knowledge: dict) -> list[dict]:
         if digest in ref_by_hash and ref_by_hash[digest] != label:
             raise ValueError("参考样本相同几何指纹出现冲突类型")
         ref_by_hash[digest] = label
+    source_hash = catalog.get("original_source_sha256") or catalog.get("source_sha256")
     results = []
     for rec in records:
         solid_id = rec["solid_id"]
@@ -87,8 +88,10 @@ def recognize_catalog(catalog: dict, knowledge: dict) -> list[dict]:
         status = "UNKNOWN"
         match_method = None
         if confirmed is not None:
-            if not isinstance(confirmed, dict) or confirmed.get("approved") is not True:
-                evidence.append("人工标签未经批准，不能确认身份")
+            if (not isinstance(confirmed, dict) or confirmed.get("approved") is not True
+                or not isinstance(source_hash, str) or not source_hash
+                or confirmed.get("source_sha256") != source_hash):
+                evidence.append("人工标签未经批准或来自其他 CST 工程，不能确认身份")
             else:
                 identity = confirmed.get("part_type")
                 if not isinstance(identity, str) or not identity:
