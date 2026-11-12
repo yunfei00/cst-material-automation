@@ -375,7 +375,7 @@ def _cleanup_workdir(
                 if blocked is not None:
                     report["last_owner_snapshot"] = identify_file_owners(blocked)
                 warnings.warn(
-                    f"P3-C 临时目录清理失败（{type(exc).__name__}: {exc}），"
+                    f"P3-C 临时目录仍被占用，清理失败（{type(exc).__name__}: {exc}），"
                     f"保留本机临时目录：{work}。请在确认 CST 已释放该副本后清理。",
                     RuntimeWarning,
                     stacklevel=2,
