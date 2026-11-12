@@ -68,7 +68,7 @@ def test_copy_only_apply_removes_all_zero_solids_and_preserves_original(tmp_path
     applied_batches = []
 
     def simulated_delete(project, ids, *, batch_size):
-        assert project.path == dest
+        assert Path(project.path) == dest
         applied_batches.append((ids, batch_size))
         assert ids == [
             "auxiliary:datum_plane", "main:Sheet_PEC", "main:empty_import"
