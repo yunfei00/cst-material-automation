@@ -140,7 +140,7 @@ def export_cst_solids(
         if project is not None:
             try:
                 project.close()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - CST vendor errors
                 warnings.warn(f"CST 工程关闭失败：{exc}", RuntimeWarning, stacklevel=2)
         if environment_owned and env is not None:
             try:
