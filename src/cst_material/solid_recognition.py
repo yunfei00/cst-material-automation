@@ -18,9 +18,9 @@ def load_knowledge(path: str | Path | None = None) -> dict:
     if data.get("schema_version") != 1:
         raise ValueError("识别知识库版本不受支持")
     if not isinstance(data.get("confirmed_solids"), dict):
-        raise ValueError("缺少已确认 Solid 映射")
+        raise TypeError("缺少已确认 Solid 映射")
     if not isinstance(data.get("reference_shapes"), list):
-        raise ValueError("参考 CAD 样本列表无效")
+        raise TypeError("参考 CAD 样本列表无效")
     return data
 
 
@@ -61,11 +61,11 @@ def recognize_catalog(catalog: dict, knowledge: dict) -> list[dict]:
     """Produce auditable labels while explicitly preserving UNKNOWN identity."""
     records = catalog.get("records")
     if not isinstance(records, list):
-        raise ValueError("无效 Solid 目录")
+        raise TypeError("无效 Solid 目录")
     manual = knowledge.get("confirmed_solids", {})
     references = knowledge.get("reference_shapes", [])
     if not isinstance(manual, dict) or not isinstance(references, list):
-        raise ValueError("识别知识结构无效")
+        raise TypeError("识别知识结构无效")
     ref_by_hash = {}
     for row in references:
         if not isinstance(row, dict) or not row.get("approved"):
