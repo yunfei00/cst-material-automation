@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -74,7 +74,7 @@ def scan_mtd_library(root: Path) -> MTDCatalog:
                     properties_verified=False,
                     size_bytes=stat.st_size,
                     modified_utc=datetime.fromtimestamp(
-                        stat.st_mtime, tz=timezone.utc
+                        stat.st_mtime, tz=UTC
                     ).isoformat(),
                     sha256=_hash_file(item),
                 )
