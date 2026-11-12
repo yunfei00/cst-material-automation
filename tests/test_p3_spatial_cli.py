@@ -15,6 +15,8 @@ def test_com_runner_never_quits_global_cst():
     assert "New-Object -ComObject 'CSTStudio.Application.2025'" in COM_RUNNER
     assert "$project.RunScript" in COM_RUNNER
     assert "$project.Quit()" in COM_RUNNER
+    assert "FinalReleaseComObject($project)" in COM_RUNNER
+    assert "FinalReleaseComObject($app)" in COM_RUNNER
     assert "$app.Quit()" not in COM_RUNNER
     assert "AddToHistory" not in COM_RUNNER
 
