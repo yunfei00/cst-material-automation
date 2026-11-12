@@ -24,6 +24,8 @@ def sha256_file(path: str | Path) -> str:
 def read_step(path: str | Path) -> list:
     """Read all closed valid solids from one STEP file; reject loose surfaces."""
     from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
     from OCP.IFSelect import IFSelect_ReturnStatus
     from OCP.STEPControl import STEPControl_Reader
     from OCP.TopAbs import TopAbs_SOLID
@@ -42,8 +44,14 @@ def read_step(path: str | Path) -> list:
     solids = []
     while explorer.More():
         solid = TopoDS.Solid_s(explorer.Current())
-        if solid.IsNull() or not solid.Closed() or not BRepCheck_Analyzer(solid).IsValid():
-            raise ValueError(f"STEP 存在开放或无效实体：{src}")
+        # The TopoDS_Shape.Closed() flag may be False for a valid STEP-imported
+        # B-rep solid. It is NOT a reliable closure test after STEP transfer.
+        if solid.IsNull() or not BRepCheck_Analyzer(solid).IsValid():
+            raise ValueError(f"STEP 存在无效实体：{src}")
+        props = GProp_GProps()
+        BRepGProp.VolumeProperties_s(solid, props)
+        if not math.isfinite(props.Mass()) or props.Mass() <= 0:
+            raise ValueError(f"STEP 实体体积非正或无效：{src}")
         solids.append(solid)
         explorer.Next()
     if not solids:
