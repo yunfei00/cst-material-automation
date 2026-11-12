@@ -130,6 +130,14 @@ def assign_and_verify(
                 raise ValueError(
                     f"Material not found by CST VBA Material.Exists: {missing_real_materials}"
                 )
+        # VBA catalog lookups were executed with add_to_history. Do not
+        # persist those temporary file-writing queries in the delivery project.
+        # Close the inspected copy, restore fresh bytes from the source, then
+        # reopen it and apply only the actual material changes.
+        project.close()
+        project = None
+        shutil.copy2(source, destination)
+        project = environment.open_project(str(destination))
         for solid_id, material_name in assignments.items():
             bindings.assign_material(project, solid_id, material_name)
         project.save(str(destination), allow_overwrite=True)
