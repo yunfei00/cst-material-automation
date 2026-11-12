@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = process_project(args.input_cst, args.output_cst)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI reports vendor errors
         print(f"执行失败：{type(exc).__name__}: {exc}", file=sys.stderr)
         print("请查看输出文件同名的 .analysis.json 诊断报告", file=sys.stderr)
         return 1
