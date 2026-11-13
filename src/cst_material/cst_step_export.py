@@ -1,9 +1,9 @@
-"""CST 2025 STEP export adapter: exact per-Solid IDs, no ordering inference.
+"""CST 2025 STEP export adapter: component-scoped STEP.Write.
 
 The VBA STEP.Write command is documented in the CST VBA import/export family,
-but per-shape export and global coordinates still require actual CST 2025 SP1
+but component-level output and global coordinates still require actual CST 2025 SP1
 validation. On any unexpected result the adapter FAILS instead of making
-a fictitious geometry/Solid mapping.
+a fictitious geometry/Solid mapping. Component exports may contain multiple Solids.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from cst_material.occt_geometry import sha256_file
 
 
 def build_step_export_vba(name: str, target: str | Path) -> str:
-    """Build documented STEP.Write(component/solid) VBA syntax."""
+    """Build STEP.Write with component path only (verified by CST operator)."""
     from cst_material.cst_bindings import _vba_string
 
     component, sep, solid = name.partition(":")
@@ -30,7 +30,7 @@ def build_step_export_vba(name: str, target: str | Path) -> str:
         "    .Reset",
         f"    .FileName ({_vba_string(str(target))})",
         "    .ExportFromActiveCoordinateSystem (False)",
-        f"    .Write ({_vba_string(component + '/' + solid)})",
+        f"    .Write ({_vba_string(component)})",
         "End With",
     ])
 
