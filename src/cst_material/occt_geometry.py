@@ -156,8 +156,29 @@ def geometry_metrics(solids: list) -> dict:
     }
 
 
+def preview_deflection(dimensions: tuple[float, float, float], maximum: float = 0.1) -> float:
+    """Choose finer preview tessellation for thin CAD parts without changing B-rep.
+
+    Chord tolerance is capped at five percent of the narrowest nonzero
+    global-axis dimension. This is a display-quality heuristic, not a
+    guaranteed representation error bound for all curved features.
+    """
+    if (len(dimensions) != 3 or not all(
+        math.isfinite(v) and v >= 0 for v in dimensions
+    )):
+        raise ValueError("预览网格尺寸无效")
+    if not math.isfinite(maximum) or maximum <= 0:
+        raise ValueError("预览网格精度必须为正数")
+    nonzero = [v for v in dimensions if v > 0]
+    if not nonzero:
+        raise ValueError("几何包围盒尺寸全部为零")
+    return min(maximum, max(1e-5, min(nonzero) * 0.05))
+
+
 def export_preview_stl(solids: list, output: str | Path, *, deflection: float = 0.1) -> Path:
     """Tessellate B-rep and export render-only STL; do not reuse for geometry."""
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.StlAPI import StlAPI_Writer
     from OCP.TopoDS import TopoDS_Builder, TopoDS_Compound
@@ -175,7 +196,12 @@ def export_preview_stl(solids: list, output: str | Path, *, deflection: float = 
     builder.MakeCompound(compound)
     for solid in solids:
         builder.Add(compound, solid)
-    mesh = BRepMesh_IncrementalMesh(compound, deflection, False, 0.2, True)
+    bounding = Bnd_Box()
+    BRepBndLib.Add_s(compound, bounding)
+    low, high = bounding.CornerMin(), bounding.CornerMax()
+    dims = (high.X() - low.X(), high.Y() - low.Y(), high.Z() - low.Z())
+    adjusted = preview_deflection(dims, maximum=deflection)
+    mesh = BRepMesh_IncrementalMesh(compound, adjusted, False, 0.18, True)
     if not mesh.IsDone():
         raise RuntimeError("OCCT 三角化失败")
     if not StlAPI_Writer().Write(compound, str(dest)) or dest.stat().st_size < 84:
