@@ -6,32 +6,30 @@ import math
 from pathlib import Path
 
 
-def axis_points(low: float, high: float, step: float):
-    """Include lower bound and upper bound, even when not step-aligned."""
-    if not all(math.isfinite(v) for v in (low, high, step)) or step <= 0 or high < low:
-        raise ValueError("扫描范围和步进必须是有效有限数值")
-    n = math.floor((high - low) / step)
-    for i in range(n + 1):
-        yield low + i * step
-    if low + n * step < high - max(1e-10, abs(high) * 1e-12):
-        yield high
+def axis_points(low: float, high: float, count: int):
+    """Exactly count evenly spaced coordinates, including both endpoints."""
+    if not all(math.isfinite(v) for v in (low, high)) or high < low:
+        raise ValueError("扫描范围无效")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 2:
+        raise ValueError("每个方向至少需要 2 个扫描点")
+    for index in range(count):
+        yield low + (high - low) * index / (count - 1)
 
 
-def scan_grid(solids, bbox, step, output, *, classify=None, max_points=2_000_000, progress=None):
-    """Scan bounding cuboid with exact B-rep classifier, atomically write CSV.
-
-    Returns counts. On failure removes partial output; never overwrites a file.
-    """
+def scan_grid(solids, bbox, counts, output, *, classify=None, max_points=2_000_000, progress=None):
+    """Scan exact requested X/Y/Z point counts and export classified CSV."""
     from cst_material.occt_geometry import classify_point
 
     if len(bbox) != 6:
         raise ValueError("bbox 应为 xmin,ymin,zmin,xmax,ymax,zmax")
-    if not math.isfinite(step) or step <= 0:
-        raise ValueError("步进必须是有限正数")
-    axes = [list(axis_points(bbox[i], bbox[i + 3], step)) for i in range(3)]
-    total = math.prod(len(a) for a in axes)
+    if len(counts) != 3 or any(
+        isinstance(n, bool) or not isinstance(n, int) or n < 2 for n in counts
+    ):
+        raise ValueError("X/Y/Z 点数必须为不小于 2 的整数")
+    total = math.prod(counts)
     if total > max_points:
-        raise ValueError(f"预计扫描 {total:,} 点，超过安全上限 {max_points:,}；请增大步进")
+        raise ValueError(f"预计扫描 {total:,} 点，超过安全上限 {max_points:,}；请减少点数")
+    axes = [list(axis_points(bbox[i], bbox[i + 3], counts[i])) for i in range(3)]
     dest = Path(output)
     if dest.exists():
         raise FileExistsError(dest)
