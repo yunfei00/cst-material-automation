@@ -106,6 +106,29 @@ M3 的单 Solid STEP VBA 导出仍是**有文档依据的实现候选**，没有
 - STEP 是精确几何；显示 STL 只做预览，不用它判断真实物体内部。
 - 7,000 Solid 场景采用索引+按需渲染，不一次加载 7,000 个 VTK Actor；但性能仍需公司实机测量。
 
+## E.1 三维渲染品质和 XYZ 查询修复（2026-11-13）
+
+已针对弹片等薄壁折弯零件的“统一颜色、曲面叠在一起”问题优化 **PySide6 + PyVistaQt** 预览：
+
+- **工程模式（默认）**：不透明 CAD 明暗、光泽、平滑曲面、锐利折弯边、外轮廓；不再将所有三角剖分边当成零件边缘。
+- **平滑模式**：保留曲面明暗和外轮廓，但不叠加折弯边。
+- **线框诊断**：显示三角面网格以诊断重叠面、几何导出或网格异常；不是日常 CAD 观察模式。
+- **增强深度层次（EDL，可选）**：适用于能支持该 VTK 渲染特性的图形驱动；如运行异常应关闭。默认关闭，避免给老旧 GPU 增加负担。
+- **薄壁细节改善**：Open CASCADE 三角化精度基于最薄包围盒轴尺寸自动调整，不再对所有零件固定使用 0.1mm。新生成预览文件名称使用 `_cad2.stl`，旧网格缓存保留但不会再被该版本优先读取；**不需要重新打开或修改源 CST**。
+- **点包含查询修复**：之前点击按钮出现 `NotImplementedError: Unable to wrap (<class 'list'>) into a pyvista type`，原因是把 Python `[point]` 传给 PyVista。现在改为使用 NumPy `(1, 3)` 数组创建的 `pyvista.PolyData`。即使点标记渲染出现异常，右侧也会保留先前 Open CASCADE 精确点包含结果，分别报告“几何查询失败”与“标记失败”，避免混淆。
+- **测试**：新增真实 PyVista PolyData 类型和坐标形状回归测试、折弯边提取、工程/平滑/线框模式选项以及薄壁自适应三角化精度测试。CI 主要验证代码与几何数据，不代替公司 Windows 显卡的实际视觉效果验证。
+
+直接拉取更新代码并打开原来已经生成的目录即可：
+
+```powershell
+git switch feat/cst-m1-m5-platform
+git pull --ff-only origin feat/cst-m1-m5-platform
+uv sync --group dev --extra viewer
+uv run --extra viewer python view_solids.py "D:\CST\Completed.geometry"
+```
+
+若此版本的 **工程模式、平滑模式、线框诊断** 均出现明显叠面或形状偏差，请对比相同 Solid 的 CST 画面并保留非敏感截图。原因可能是原始 STEP 几何导出多个相交体、重合面、导出坐标错误或网格问题，而不只是颜色设置；这种情况应先核查 STEP/网格，不要继续叠加视觉特效掩盖几何错误。
+
 ## F. 必须完成的真实工程验收
 
 1. 选择非敏感/非生产工程，确认 CST 的 STEP.Write 能正确导出所选 Solid，文件来源及 ID 一致。
