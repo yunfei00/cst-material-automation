@@ -24,7 +24,7 @@ def component_hierarchy(catalog: dict[str, str]) -> dict:
         for depth in range(1, len(parts) + 1):
             key = "/".join(parts[:depth])
             parent = "/".join(parts[:depth - 1]) if depth > 1 else None
-            node = components.setdefault(key, {
+            components.setdefault(key, {
                 "path": key, "parent": parent, "children": [], "solids": [],
             })
             if parent:
