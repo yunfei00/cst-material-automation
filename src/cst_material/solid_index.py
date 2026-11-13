@@ -148,7 +148,8 @@ def ensure_preview_mesh(folder: str | Path, record: dict) -> Path:
     digest = record["features"]["step_sha256"]
     if digest != sha256_file(_inside_folder(root, record["step"])):
         raise ValueError("STEP 几何已经改变，必须重建缓存")
-    mesh = root / "meshes" / f"{digest}.stl"
+    # v2 busts old 0.1 mm coarse previews; preserve exact STEP hashes.
+    mesh = root / "meshes" / f"{digest}_cad2.stl"
     if not mesh.exists():
         export_preview_stl(read_step(_inside_folder(root, record["step"])), mesh)
     return mesh
