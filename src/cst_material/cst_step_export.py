@@ -18,25 +18,32 @@ from pathlib import Path
 from cst_material.occt_geometry import sha256_file
 
 
+def build_step_export_vba(name: str, target: str | Path) -> str:
+    """Build documented STEP.Write(component/solid) VBA syntax."""
+    from cst_material.cst_bindings import _vba_string
+
+    component, sep, solid = name.partition(":")
+    if not sep or not component or not solid:
+        raise ValueError(f"Solid ID 必须为 Component:Solid：{name}")
+    return "\\n".join([
+        "With STEP",
+        "    .Reset",
+        f"    .FileName ({_vba_string(str(target))})",
+        "    .ExportFromActiveCoordinateSystem (False)",
+        f"    .Write ({_vba_string(component + '/' + solid)})",
+        "End With",
+    ])
+
+
 def _export_step_batch(project, items: list[tuple[str, Path]]) -> None:
-    from cst_material.cst_bindings import _modeler, _vba_string
+    from cst_material.cst_bindings import _modeler
 
     # One History operation per Solid: identify the exact failing exporter.
     # Do not silently skip failures or claim a complete geometry database.
     for name, target in items:
-        component, sep, solid = name.partition(":")
-        if not sep or not component or not solid:
-            raise ValueError(f"Solid ID 必须为 Component:Solid：{name}")
         if target.exists():
             raise FileExistsError(target)
-        code = "\\n".join([
-            "With STEP",
-            "    .Reset",
-            f"    .FileName {_vba_string(str(target))}",
-            "    .ExportFromActiveCoordinateSystem False",
-            f"    .Write {_vba_string(component + '/' + solid)}",
-            "End With",
-        ])
+        code = build_step_export_vba(name, target)
         try:
             _modeler(project).add_to_history(
                 "CST Material Automation: export one Solid STEP", code,
