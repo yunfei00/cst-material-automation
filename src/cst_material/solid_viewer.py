@@ -35,13 +35,13 @@ def launch_viewer(path: str | Path) -> int:
         QCheckBox,
         QComboBox,
         QDoubleSpinBox,
+        QFileDialog,
         QFormLayout,
-        QSpinBox,
         QLabel,
         QLineEdit,
         QMainWindow,
-        QFileDialog,
         QPushButton,
+        QSpinBox,
         QSplitter,
         QTreeWidget,
         QTreeWidgetItem,
@@ -362,7 +362,7 @@ def launch_viewer(path: str | Path) -> int:
                     f"表面 {result['boundary']:,}、内 {result['inside']:,}\n"
                     f"保存：{result['output']}"
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - GUI reports geometry and file errors
                 self.scan_status.setText(f"扫描失败：{type(exc).__name__}: {exc}")
             finally:
                 self.scan_button.setEnabled(True)
