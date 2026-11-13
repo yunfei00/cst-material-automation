@@ -6,6 +6,8 @@ import pytest
 
 pv = pytest.importorskip("pyvista")
 
+from cst_material.occt_geometry import preview_deflection
+
 from cst_material.cad_rendering import (
     RENDER_MODES,
     extract_cad_feature_edges,
@@ -84,3 +86,10 @@ def test_cad_render_rejects_wrong_mode_and_angle():
         render_selected_solid(FakePlotter(), pv.Cube(), "invalid")
     with pytest.raises(ValueError, match="角度"):
         extract_cad_feature_edges(pv.Cube(), -1)
+
+
+def test_thin_part_uses_finer_mesh_resolution_without_changing_cad_geometry():
+    assert preview_deflection((0.2, 12.0, 30.0)) == pytest.approx(0.01)
+    assert preview_deflection((10.0, 20.0, 30.0)) == pytest.approx(0.1)
+    with pytest.raises(ValueError, match="尺寸"):
+        preview_deflection((float("nan"), 10.0, 20.0))
