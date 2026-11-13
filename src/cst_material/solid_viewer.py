@@ -16,6 +16,7 @@ from cst_material.cad_rendering import (
     query_point_mesh,
     render_selected_solid,
 )
+from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.knowledge_store import store_confirmation
 from cst_material.occt_geometry import (
     classify_point,
@@ -24,7 +25,6 @@ from cst_material.occt_geometry import (
     read_step,
 )
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
-from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.solid_scan import scan_grid
 from cst_material.structure_samples import (
     load_samples,
