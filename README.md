@@ -1,5 +1,10 @@
 # CST Material Automation
 
+## 结构识别 V1（零件类别，不涉及材料）
+
+当前开发分支：`feat/solid-structure-recognition-v1`。已增加本地已确认结构样本库、几何特征提取、相似样本 Top-5 检索及 PySide6 人工确认入口。**安装、实机验收、反馈模板与 CI 验收记录请以 [结构识别 V1 验收文档](docs/structure-recognition-v1-verification.md) 为准。**
+
+
 ## M1–M5 集成开发分支（2026-11-13）
 
 **面向最终产品**：输入一个 CST 工程，生成几何缓存、分析 Solid 身份、匹配获批准材料并保存新的 CST 工程；另提供 PySide6/VTK 离线三维查看器。
