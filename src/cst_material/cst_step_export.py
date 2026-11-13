@@ -21,15 +21,15 @@ from cst_material.occt_geometry import sha256_file
 def _export_step_batch(project, items: list[tuple[str, Path]]) -> None:
     from cst_material.cst_bindings import _modeler, _vba_string
 
-    code = []
+    # One History operation per Solid: identify the exact failing exporter.
+    # Do not silently skip failures or claim a complete geometry database.
     for name, target in items:
         component, sep, solid = name.partition(":")
         if not sep or not component or not solid:
             raise ValueError(f"Solid ID 必须为 Component:Solid：{name}")
         if target.exists():
             raise FileExistsError(target)
-        # CST VBA STEP exporter uses component/solid path in Write().
-        code.extend([
+        code = "\\n".join([
             "With STEP",
             "    .Reset",
             f"    .FileName {_vba_string(str(target))}",
@@ -37,10 +37,19 @@ def _export_step_batch(project, items: list[tuple[str, Path]]) -> None:
             f"    .Write {_vba_string(component + '/' + solid)}",
             "End With",
         ])
-    _modeler(project).add_to_history(
-        "CST Material Automation: export Solid STEP to local cache",
-        "\n".join(code),
-    )
+        try:
+            _modeler(project).add_to_history(
+                "CST Material Automation: export one Solid STEP", code,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"STEP 导出失败：Solid={name!r}；目标={target}；"
+                f"History 命令={code!r}；原始错误={type(exc).__name__}: {exc}"
+            ) from exc
+        if not target.is_file() or target.stat().st_size < 100:
+            raise RuntimeError(
+                f"STEP 导出命令执行后文件缺失或过小：Solid={name!r}；目标={target}"
+            )
 
 
 def export_cst_solids(
@@ -78,6 +87,7 @@ def export_cst_solids(
     environment_owned = environment is None
     env = None
     exported = []
+    current_solid = None
     try:
         staged = temp / src.name
         src_hash = sha256_file(src)
@@ -99,7 +109,8 @@ def export_cst_solids(
         run_exporter = batch_exporter or _export_step_batch
         for offset in range(0, len(files), batch_size):
             chunk = files[offset:offset + batch_size]
-            run_exporter(project, chunk)
+            for current_solid, current_target in chunk:
+                run_exporter(project, [(current_solid, current_target)])
             for name, target in chunk:
                 if not target.is_file() or target.stat().st_size < 100:
                     raise RuntimeError(f"CST 未正确导出 STEP：{name} → {target}")
@@ -132,6 +143,8 @@ def export_cst_solids(
                 "status": "FAIL",
                 "error": f"{type(exc).__name__}: {exc}",
                 "exported_count": len(exported),
+                "failed_solid": current_solid,
+                "exception_type": type(exc).__name__,
                 "note": "不要将残留 STEP 当作完整索引",
             }, ensure_ascii=False, indent=2), encoding="utf-8"
         )
