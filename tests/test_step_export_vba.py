@@ -6,7 +6,8 @@ from cst_material.cst_step_export import build_step_export_vba
 
 def test_step_export_uses_component_only_and_parentheses():
     code = build_step_export_vba("component1:solid1", r"C:\Temp\part.step")
-    assert '.Write ("component1")' in code\n    assert "component1/solid1" not in code
+    assert '.Write ("component1")' in code
+    assert "component1/solid1" not in code
     assert '.FileName ("C:\\Temp\\part.step")' in code
     assert ".ExportFromActiveCoordinateSystem (False)" in code
     assert code.splitlines()[0] == "With STEP"
