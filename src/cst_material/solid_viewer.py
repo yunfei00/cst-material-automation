@@ -25,7 +25,11 @@ from cst_material.occt_geometry import (
 )
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
 from cst_material.solid_scan import scan_grid
-from cst_material.structure_samples import load_samples, save_confirmed_sample, search_similar_samples
+from cst_material.structure_samples import (
+    load_samples,
+    save_confirmed_sample,
+    search_similar_samples,
+)
 
 
 def launch_viewer(path: str | Path) -> int:
