@@ -12,6 +12,21 @@ RenderMode = Literal["工程模式", "平滑模式", "线框诊断"]
 RENDER_MODES: tuple[RenderMode, ...] = ("工程模式", "平滑模式", "线框诊断")
 
 
+def query_point_mesh(point):
+    """Create PyVista-compatible 1x3 XYZ point geometry from Python coordinates.
+
+    PyVista's plotter.add_points([tuple]) can raise NotImplementedError for
+    a plain Python list; always pass a typed NumPy array / PolyData.
+    """
+    import numpy as np
+    import pyvista as pv
+
+    arr = np.asarray(point, dtype=np.float64)
+    if arr.shape != (3,) or not np.isfinite(arr).all():
+        raise ValueError("查询点必须恰好包含三个有限坐标")
+    return pv.PolyData(arr.reshape(1, 3))
+
+
 def prepare_display_mesh(mesh):
     """Merge exact duplicate vertices; preserve faces and dimensional scale."""
     import pyvista as pv
