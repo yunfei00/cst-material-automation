@@ -11,8 +11,10 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --extra viewer
       - name: Lint
         run: uv run ruff check .
       - name: Unit tests
-        run: uv run pytest -m "not cst_real"
+        run: uv run --extra viewer pytest -m "not cst_real"
+      - name: Verify viewer imports on Windows
+        run: uv run --extra viewer python -c "import PySide6, pyvista, pyvistaqt; from cst_material.solid_viewer import launch_viewer; print('Viewer imports PASS')"

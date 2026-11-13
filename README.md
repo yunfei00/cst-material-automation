@@ -1,5 +1,19 @@
 # CST Material Automation
 
+## M1–M5 集成开发分支（2026-11-13）
+
+**面向最终产品**：输入一个 CST 工程，生成几何缓存、分析 Solid 身份、匹配获批准材料并保存新的 CST 工程；另提供 PySide6/VTK 离线三维查看器。
+
+- 两路径总入口：`python run_project.py "D:\CST\Original.cst" "D:\CST\Completed.cst"`。
+- 独立 GUI：`python view_solids.py "D:\CST\Completed.geometry"`，或打开一个 STEP/STP。
+- 详细安装、功能范围、知识库格式、输出文件与真实 CST 验收说明见 [M1–M5 集成交付文档](docs/m1-m5-integrated-platform.md)。
+- 当前已写入 M1～M5 的代码和合成测试；**公司真实 CST 的 STEP.Write 导出、真实弹片识别精度、GUI 实际体验、7k 规模性能尚未验收**。不能将 CI 绿色等同于正式生产可用。
+- 已确认零体积规则 R001 直接删除全部 V=0 Solid；身份/材料不确定时返回 `NEEDS_REVIEW`，绝不为未知零件猜材料。
+
+下面为原有 P1～P4 技术模块说明，保留便于定位接口和历史验收：
+
+---
+
 面向 **CST Studio Suite 2025 SP1** 的 Windows 离线自动化工具。P1（结构/材料读取）与 P2（工程副本材料赋值并回读）已经由用户在真实 CST 工程上验证通过；当前新分支开发 P3 只读几何特征与 MTD 材料目录。
 
 ## 输入和目标
