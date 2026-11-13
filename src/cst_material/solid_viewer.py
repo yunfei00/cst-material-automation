@@ -24,6 +24,7 @@ from cst_material.occt_geometry import (
     read_step,
 )
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
+from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.solid_scan import scan_grid
 from cst_material.structure_samples import (
     load_samples,
@@ -176,7 +177,9 @@ def launch_viewer(path: str | Path) -> int:
             self.save_shape_sample.clicked.connect(self._save_shape_sample)
 
             if self.root:
-                catalog = load_catalog(self.root, verify_files=False)
+                catalog = (load_diagnostic_catalog(self.root)
+                           if (self.root / "report.json").is_file()
+                           else load_catalog(self.root, verify_files=False))
                 self.records = catalog["records"]
                 self.record_lookup = {rec["solid_id"]: rec for rec in self.records}
                 for rec in self.records:
@@ -187,7 +190,7 @@ def launch_viewer(path: str | Path) -> int:
                     ])
                     self.tree.addTopLevelItem(item)
                 self.statusBar().showMessage(
-                    f"已加载 {len(self.records)} 条 Solid 索引；仅按需读取三维网格"
+                    f"已加载 {len(self.records)} 条导出记录；仅按需读取 STEP 几何"
                 )
                 if self.records:
                     self.tree.setCurrentItem(self.tree.topLevelItem(0))
@@ -212,7 +215,8 @@ def launch_viewer(path: str | Path) -> int:
             start = time.perf_counter()
             try:
                 file_path = (self.root / rec["step"]).resolve()
-                mesh_path = ensure_preview_mesh(self.root, rec)
+                mesh_path = (None if rec.get("diagnostic_export")
+                             else ensure_preview_mesh(self.root, rec))
                 self._display_step(file_path, rec, mesh_path)
                 self.statusBar().showMessage(
                     f"显示 {rec['solid_id']}：{time.perf_counter() - start:.3f}s"
