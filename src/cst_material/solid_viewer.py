@@ -182,29 +182,58 @@ def launch_viewer(path: str | Path) -> int:
                            else load_catalog(self.root, verify_files=False))
                 self.records = catalog["records"]
                 self.record_lookup = {rec["solid_id"]: rec for rec in self.records}
+                nodes = {}
                 for rec in self.records:
-                    item = QTreeWidgetItem([
-                        rec["solid_id"],
-                        rec.get("part_type") if rec.get("part_type") != "UNKNOWN"
-                        else (rec.get("candidate") or "UNKNOWN"),
-                    ])
-                    self.tree.addTopLevelItem(item)
+                    if rec.get("diagnostic_export"):
+                        component = rec["component"].replace("\\", "/")
+                        parent = None
+                        parts = component.split("/")
+                        for depth in range(1, len(parts) + 1):
+                            key = "/".join(parts[:depth])
+                            if key not in nodes:
+                                node = QTreeWidgetItem([parts[depth - 1], "组件"])
+                                if parent is None:
+                                    self.tree.addTopLevelItem(node)
+                                else:
+                                    parent.addChild(node)
+                                nodes[key] = node
+                            parent = nodes[key]
+                        item = QTreeWidgetItem([
+                            rec["solid_id"],
+                            f"组件级 STEP · {len(rec.get('solid_ids', []))} 个 Solid",
+                        ])
+                        parent.addChild(item)
+                    else:
+                        item = QTreeWidgetItem([
+                            rec["solid_id"],
+                            rec.get("part_type") if rec.get("part_type") != "UNKNOWN"
+                            else (rec.get("candidate") or "UNKNOWN"),
+                        ])
+                        self.tree.addTopLevelItem(item)
+                self.tree.expandToDepth(1)
                 self.statusBar().showMessage(
                     f"已加载 {len(self.records)} 条导出记录；仅按需读取 STEP 几何"
                 )
-                if self.records:
+                if self.records and not self.records[0].get("diagnostic_export"):
                     self.tree.setCurrentItem(self.tree.topLevelItem(0))
             else:
                 self._display_step(target, {"solid_id": target.name, "step": str(target)})
 
         def _filter_tree(self, keyword):
             value = keyword.casefold().strip()
+            def filter_node(item):
+                child_matches = [filter_node(item.child(i))
+                                 for i in range(item.childCount())]
+                own_match = (value in item.text(0).casefold()
+                             or value in item.text(1).casefold())
+                visible = own_match or any(child_matches)
+                item.setHidden(not visible)
+                if value and any(child_matches):
+                    item.setExpanded(True)
+                return visible
+
             for pos in range(self.tree.topLevelItemCount()):
-                item = self.tree.topLevelItem(pos)
-                item.setHidden(
-                    value not in item.text(0).casefold()
-                    and value not in item.text(1).casefold()
-                )
+                filter_node(self.tree.topLevelItem(pos))
 
         def _select_solid(self, item, _previous):
             if item is None or not self.root:
