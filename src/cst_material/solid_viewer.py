@@ -25,6 +25,7 @@ from cst_material.occt_geometry import (
 )
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
 from cst_material.solid_scan import scan_grid
+from cst_material.structure_samples import load_samples, save_confirmed_sample, search_similar_samples
 
 
 def launch_viewer(path: str | Path) -> int:
@@ -138,6 +139,12 @@ def launch_viewer(path: str | Path) -> int:
             right_layout.addWidget(self.render_info)
             self.reset_button = QPushButton("重置三维视角")
             right_layout.addWidget(self.reset_button)
+            right_layout.addWidget(QLabel("结构相似样本（仅零件类别）"))
+            self.similar_results = QLabel("暂无样本")
+            self.similar_results.setWordWrap(True)
+            right_layout.addWidget(self.similar_results)
+            self.save_shape_sample = QPushButton("确认类别并保存结构样本")
+            right_layout.addWidget(self.save_shape_sample)
             right_layout.addWidget(QLabel("人工确认零件身份 / 材料"))
             self.confirmed_type = QLineEdit()
             self.confirmed_type.setPlaceholderText("真实零件类别，例如 SPRING_CONTACT")
@@ -162,6 +169,7 @@ def launch_viewer(path: str | Path) -> int:
             self.render_mode.currentTextChanged.connect(self._render_mode_changed)
             self.depth_cue.toggled.connect(self._toggle_depth_cue)
             self.save_confirmation.clicked.connect(self._confirm_identity)
+            self.save_shape_sample.clicked.connect(self._save_shape_sample)
 
             if self.root:
                 catalog = load_catalog(self.root, verify_files=False)
@@ -221,6 +229,7 @@ def launch_viewer(path: str | Path) -> int:
             self.active_record = rec
             feats = geometry_metrics(solids)
             self.active_features = feats
+            self._refresh_shape_matches()
             b = feats["bbox_mm"]
             for widget, center in zip(
                 (self.x, self.y, self.z),
@@ -366,6 +375,40 @@ def launch_viewer(path: str | Path) -> int:
                 self.scan_status.setText(f"扫描失败：{type(exc).__name__}: {exc}")
             finally:
                 self.scan_button.setEnabled(True)
+
+        def _sample_library_path(self):
+            return Path.home() / ".cst_material_automation" / "structure_samples_v1.json"
+
+        def _refresh_shape_matches(self):
+            try:
+                hits = search_similar_samples(
+                    self.active_features, load_samples(self._sample_library_path())
+                )
+                self.similar_results.setText("\n".join(
+                    f"{h['part_type']} / {h['sample_id']}: {h['similarity']:.3f}"
+                    for h in hits
+                ) if hits else "暂无已确认结构样本")
+            except Exception as exc:  # noqa: BLE001 - display local library errors
+                self.similar_results.setText(f"检索失败：{exc}")
+
+        def _save_shape_sample(self):
+            if self.active_features is None or self.active_record is None:
+                return
+            try:
+                from cst_material.occt_geometry import sha256_file
+
+                source = self.root / self.active_record["step"] if self.root else target
+                digest = sha256_file(source)
+                sample_id = f"{digest[:16]}:{self.active_record['solid_id']}"
+                save_confirmed_sample(
+                    self._sample_library_path(), sample_id,
+                    self.confirmed_type.text(), self.active_features,
+                    source_sha256=digest,
+                )
+                self._refresh_shape_matches()
+                self.statusBar().showMessage(f"已保存结构样本：{sample_id}")
+            except Exception as exc:  # noqa: BLE001 - display local library errors
+                self.similar_results.setText(f"保存失败：{exc}")
 
         def _confirm_identity(self):
             if not self.root or self.active_record is None:
