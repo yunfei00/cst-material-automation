@@ -36,6 +36,11 @@ def prepare_display_mesh(mesh):
     if mesh.n_cells == 0 or mesh.n_points == 0:
         raise ValueError("渲染网格为空")
     result = mesh.triangulate().clean(tolerance=0.0)
+    # Reorient connected triangles consistently; avoid false dark patches.
+    result = result.compute_normals(
+        cell_normals=True, point_normals=True, consistent_normals=True,
+        auto_orient_normals=False, split_vertices=False, inplace=False,
+    )
     if result.n_cells == 0 or result.n_points == 0:
         raise ValueError("清理后网格为空")
     return result
@@ -65,6 +70,8 @@ def render_selected_solid(plotter, mesh, mode: RenderMode = "工程模式"):
         raise ValueError(f"不支持的三维显示模式：{mode}")
     pvmesh = prepare_display_mesh(mesh)
     plotter.clear()
+    # Avoid coincident feature lines fighting with the surface depth buffer.
+    # Polygon offset is applied to the surface actor only where supported.
     if mode == "线框诊断":
         actor = plotter.add_mesh(
             pvmesh,
@@ -88,14 +95,18 @@ def render_selected_solid(plotter, mesh, mode: RenderMode = "工程模式"):
         smooth_shading=True,
         split_sharp_edges=True,
         feature_angle=38.0,
-        ambient=0.24,
-        diffuse=0.76,
-        specular=0.32,
-        specular_power=28,
+        ambient=0.30,
+        diffuse=0.70,
+        specular=0.18,
+        specular_power=20,
         silhouette={"color": "#e2eef7", "line_width": 1.5},
         pickable=True,
         name="selected_solid",
     )
+    try:
+        actor.GetProperty().SetInterpolationToPhong()
+    except AttributeError:
+        pass
     if mode == "平滑模式":
         return actor, 0, "平滑模式：曲面明暗 + 外轮廓（不显示折弯边）"
 
@@ -106,7 +117,7 @@ def render_selected_solid(plotter, mesh, mode: RenderMode = "工程模式"):
         plotter.add_mesh(
             features,
             color="#34465a",
-            line_width=1.4,
+            line_width=1.1,
             lighting=False,
             pickable=False,
             name="cad_feature_edges",
