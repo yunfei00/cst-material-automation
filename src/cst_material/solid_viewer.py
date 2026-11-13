@@ -24,6 +24,7 @@ from cst_material.occt_geometry import (
     read_step,
 )
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
+from cst_material.solid_scan import scan_grid
 
 
 def launch_viewer(path: str | Path) -> int:
@@ -38,6 +39,7 @@ def launch_viewer(path: str | Path) -> int:
         QLabel,
         QLineEdit,
         QMainWindow,
+        QFileDialog,
         QPushButton,
         QSplitter,
         QTreeWidget,
@@ -65,6 +67,7 @@ def launch_viewer(path: str | Path) -> int:
             self.tempdir = tempfile.TemporaryDirectory(prefix="cst_viewer_")
             self.preview_actor = None
             self.active_mesh = None
+            self.active_features = None
             self.picking_enabled = False
             splitter = QSplitter(Qt.Orientation.Horizontal)
             self.setCentralWidget(splitter)
@@ -108,6 +111,17 @@ def launch_viewer(path: str | Path) -> int:
             self.answer = QLabel("尚未查询")
             self.answer.setWordWrap(True)
             right_layout.addWidget(self.answer)
+            right_layout.addWidget(QLabel("包围盒扫描步进（mm）"))
+            self.scan_step = QDoubleSpinBox()
+            self.scan_step.setRange(0.000001, 1e9)
+            self.scan_step.setDecimals(6)
+            self.scan_step.setValue(1.0)
+            right_layout.addWidget(self.scan_step)
+            self.scan_button = QPushButton("扫描并导出 XYZ/value CSV")
+            right_layout.addWidget(self.scan_button)
+            self.scan_status = QLabel("value: -1 外部 / 0 表面 / 1 内部")
+            self.scan_status.setWordWrap(True)
+            right_layout.addWidget(self.scan_status)
             right_layout.addWidget(QLabel("三维显示模式"))
             self.render_mode = QComboBox()
             self.render_mode.addItems(RENDER_MODES)
@@ -138,6 +152,7 @@ def launch_viewer(path: str | Path) -> int:
             self.search.textChanged.connect(self._filter_tree)
             self.tree.currentItemChanged.connect(self._select_solid)
             self.check_button.clicked.connect(self._query_point)
+            self.scan_button.clicked.connect(self._scan_solid)
             self.reset_button.clicked.connect(self.plotter.reset_camera)
             self.render_mode.currentTextChanged.connect(self._render_mode_changed)
             self.depth_cue.toggled.connect(self._toggle_depth_cue)
@@ -199,7 +214,9 @@ def launch_viewer(path: str | Path) -> int:
             self._draw_active_mesh()
             self.active_solids = solids
             self.active_record = rec
-            feats = rec.get("features") or geometry_metrics(solids)
+            feats = geometry_metrics(solids)
+            self.active_features = feats
+            b = feats["bbox_mm"]
             self.info.setText(
                 f"Solid ID: {rec['solid_id']}\n"
                 f"识别身份: {rec.get('part_type', 'UNKNOWN')} "
@@ -210,7 +227,12 @@ def launch_viewer(path: str | Path) -> int:
                 f"体积: {feats['volume_mm3']:.6g} mm³\n"
                 f"面积: {feats['surface_mm2']:.6g} mm²\n"
                 f"面数: {feats['face_count']}；边数: {feats['edge_count']}\n"
-                f"外形尺寸: {feats['dimensions_mm']}\n"
+                f"Xmin / Xmax: {b[0]:.9g} / {b[3]:.9g} mm\n"
+                f"Ymin / Ymax: {b[1]:.9g} / {b[4]:.9g} mm\n"
+                f"Zmin / Zmax: {b[2]:.9g} / {b[5]:.9g} mm\n"
+                f"外形尺寸 XYZ: {feats['dimensions_mm']} mm\n"
+                f"实体数量: {feats['solid_body_count']}；顶点数: {feats['vertex_count']}\n"
+                f"曲面类型: {feats['surface_types']}\n"
                 f"读取/显示: {time.perf_counter() - start:.3f} s"
             )
             self.confirmed_type.setText(
@@ -220,6 +242,7 @@ def launch_viewer(path: str | Path) -> int:
             self.confirmed_material.setText("")
             self.approve_material.setChecked(False)
             self.answer.setText("请输入 XYZ，判断是否在精确 B-rep 实体内部。")
+            self.scan_status.setText("value: -1 外部 / 0 表面 / 1 内部")
 
         def _draw_active_mesh(self):
             if self.active_mesh is None:
@@ -288,6 +311,11 @@ def launch_viewer(path: str | Path) -> int:
             result_text = f"精确实体判断：{labels.get(result, result)}\n点坐标(mm)：{point}"
             self.answer.setText(result_text)
             try:
+                self.plotter.add_point_labels(
+                    query_point_mesh(point), [labels.get(result, result)],
+                    name="query_point_label", always_visible=True,
+                    show_points=True, point_size=12, text_color="yellow",
+                )
                 self.plotter.add_mesh(
                     query_point_mesh(point),
                     style="points", color="#ff7043", point_size=16,
@@ -299,6 +327,34 @@ def launch_viewer(path: str | Path) -> int:
                     f"{result_text}\n注意：判断已完成，但三维标记失败："
                     f"{type(exc).__name__}: {exc}"
                 )
+
+        def _scan_solid(self):
+            if self.active_solids is None or self.active_features is None:
+                self.scan_status.setText("请先加载 Solid")
+                return
+            filename, _ = QFileDialog.getSaveFileName(
+                self, "保存扫描 CSV", "solid_scan.csv", "CSV (*.csv)"
+            )
+            if not filename:
+                return
+            self.scan_button.setEnabled(False)
+            try:
+                def progress(done, total):
+                    self.scan_status.setText(f"扫描中 {done:,}/{total:,}")
+                    QApplication.processEvents()
+                result = scan_grid(
+                    self.active_solids, self.active_features["bbox_mm"],
+                    self.scan_step.value(), filename, progress=progress,
+                )
+                self.scan_status.setText(
+                    f"完成 {result['total']:,} 点：外 {result['outside']:,}、"
+                    f"表面 {result['boundary']:,}、内 {result['inside']:,}\n"
+                    f"保存：{result['output']}"
+                )
+            except Exception as exc:
+                self.scan_status.setText(f"扫描失败：{type(exc).__name__}: {exc}")
+            finally:
+                self.scan_button.setEnabled(True)
 
         def _confirm_identity(self):
             if not self.root or self.active_record is None:
