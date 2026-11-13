@@ -65,6 +65,7 @@ def launch_viewer(path: str | Path) -> int:
             self.tempdir = tempfile.TemporaryDirectory(prefix="cst_viewer_")
             self.preview_actor = None
             self.active_mesh = None
+            self.picking_enabled = False
             splitter = QSplitter(Qt.Orientation.Horizontal)
             self.setCentralWidget(splitter)
 
@@ -223,6 +224,9 @@ def launch_viewer(path: str | Path) -> int:
         def _draw_active_mesh(self):
             if self.active_mesh is None:
                 return
+            if self.picking_enabled:
+                self.plotter.disable_picking()
+                self.picking_enabled = False
             self.preview_actor, edge_count, description = render_selected_solid(
                 self.plotter, self.active_mesh, self.render_mode.currentText()
             )
@@ -232,6 +236,7 @@ def launch_viewer(path: str | Path) -> int:
             self.plotter.enable_mesh_picking(
                 callback=self._on_picked, show=False, left_clicking=True
             )
+            self.picking_enabled = True
             self.statusBar().showMessage(
                 f"渲染模式：{self.render_mode.currentText()}；折弯边 {edge_count}"
             )
@@ -274,17 +279,23 @@ def launch_viewer(path: str | Path) -> int:
             point = (self.x.value(), self.y.value(), self.z.value())
             try:
                 result = classify_point(self.active_solids, point)
+            except Exception as exc:  # noqa: BLE001 - reports actual OCC failure
+                self.answer.setText(f"精确几何查询失败：{type(exc).__name__}: {exc}")
+                return
+            result_text = f"精确实体判断：{result}\n点坐标(mm)：{point}"
+            self.answer.setText(result_text)
+            try:
                 self.plotter.add_mesh(
                     query_point_mesh(point),
                     style="points", color="#ff7043", point_size=16,
                     render_points_as_spheres=True, lighting=False,
                     pickable=False, name="query_point",
                 )
+            except Exception as exc:  # noqa: BLE001 - keep geometry answer on draw failure
                 self.answer.setText(
-                    f"精确实体判断：{result}\n点坐标(mm)：{point}"
+                    f"{result_text}\n注意：判断已完成，但三维标记失败："
+                    f"{type(exc).__name__}: {exc}"
                 )
-            except Exception as exc:  # noqa: BLE001 - GUI reports unexpected errors
-                self.answer.setText(f"查询失败：{type(exc).__name__}: {exc}")
 
         def _confirm_identity(self):
             if not self.root or self.active_record is None:
