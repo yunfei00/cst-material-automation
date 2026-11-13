@@ -89,7 +89,7 @@ def diagnose_one_solid(
                 raise RuntimeError(f"STEP 文件过小：{size} 字节")
             record("EXPORT_OK", bytes=size)
             report["status"] = "PASS"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - vendor CST errors must be logged
             record("ERROR", exception_type=type(exc).__name__, message=str(exc))
             report["error"] = f"{type(exc).__name__}: {exc}"
             report["traceback"] = traceback.format_exc()
