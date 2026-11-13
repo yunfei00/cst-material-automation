@@ -6,8 +6,6 @@ import pytest
 
 pv = pytest.importorskip("pyvista")
 
-from cst_material.occt_geometry import preview_deflection
-
 from cst_material.cad_rendering import (
     RENDER_MODES,
     extract_cad_feature_edges,
@@ -15,6 +13,7 @@ from cst_material.cad_rendering import (
     query_point_mesh,
     render_selected_solid,
 )
+from cst_material.occt_geometry import preview_deflection
 
 
 def test_query_xyz_makes_pyvista_polydata_not_list():
