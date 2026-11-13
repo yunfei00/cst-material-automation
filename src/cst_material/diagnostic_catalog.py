@@ -10,7 +10,7 @@ def load_diagnostic_catalog(folder: str | Path) -> dict:
     report = json.loads((root / "report.json").read_text(encoding="utf-8"))
     items = report.get("items")
     if not isinstance(items, list):
-        raise ValueError("诊断报告缺少 items")
+        raise TypeError("诊断报告缺少 items")
     records = []
     for item in items:
         if item.get("status") != "PASS":
