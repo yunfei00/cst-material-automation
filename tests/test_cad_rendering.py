@@ -92,3 +92,11 @@ def test_thin_part_uses_finer_mesh_resolution_without_changing_cad_geometry():
     assert preview_deflection((10.0, 20.0, 30.0)) == pytest.approx(0.1)
     with pytest.raises(ValueError, match="尺寸"):
         preview_deflection((float("nan"), 10.0, 20.0))
+
+
+def test_display_mesh_has_consistent_surface_normals():
+    mesh = prepare_display_mesh(pv.Cube().triangulate())
+    assert "Normals" in mesh.point_data
+    assert "Normals" in mesh.cell_data
+    assert np.isfinite(mesh.point_data["Normals"]).all()
+    assert np.isfinite(mesh.cell_data["Normals"]).all()
