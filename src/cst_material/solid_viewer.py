@@ -233,6 +233,7 @@ def launch_viewer(path: str | Path) -> int:
             self.render_info.setText(description)
             self.plotter.view_isometric()
             self.plotter.reset_camera()
+            self.plotter.renderer.ResetCameraClippingRange()
             self.plotter.enable_mesh_picking(
                 callback=self._on_picked, show=False, left_clicking=True
             )
@@ -266,7 +267,8 @@ def launch_viewer(path: str | Path) -> int:
         def _on_picked(self, _picked):
             if self.preview_actor is None:
                 return
-            self.preview_actor.GetProperty().SetColor(1.0, 0.65, 0.1)
+            # Keep neutral CAD shading; recoloring the whole spring removes
+            # the face-to-face contrast needed for thin folded components.
             self.plotter.render()
             self.answer.setText(
                 f"三维选中 Solid: {self.active_record['solid_id']}"
@@ -282,7 +284,8 @@ def launch_viewer(path: str | Path) -> int:
             except Exception as exc:  # noqa: BLE001 - reports actual OCC failure
                 self.answer.setText(f"精确几何查询失败：{type(exc).__name__}: {exc}")
                 return
-            result_text = f"精确实体判断：{result}\n点坐标(mm)：{point}"
+            labels = {"INSIDE": "实体内部", "ON_BOUNDARY": "实体表面（容差内）", "OUTSIDE": "实体外部"}
+            result_text = f"精确实体判断：{labels.get(result, result)}\n点坐标(mm)：{point}"
             self.answer.setText(result_text)
             try:
                 self.plotter.add_mesh(
