@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import math
-import os
 from pathlib import Path
 
 
@@ -11,7 +10,7 @@ def axis_points(low: float, high: float, step: float):
     """Include lower bound and upper bound, even when not step-aligned."""
     if not all(math.isfinite(v) for v in (low, high, step)) or step <= 0 or high < low:
         raise ValueError("扫描范围和步进必须是有效有限数值")
-    n = int(math.floor((high - low) / step))
+    n = math.floor((high - low) / step)
     for i in range(n + 1):
         yield low + i * step
     if low + n * step < high - max(1e-10, abs(high) * 1e-12):
