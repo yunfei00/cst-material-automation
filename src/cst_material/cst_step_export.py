@@ -25,7 +25,7 @@ def build_step_export_vba(name: str, target: str | Path) -> str:
     component, sep, solid = name.partition(":")
     if not sep or not component or not solid:
         raise ValueError(f"Solid ID 必须为 Component:Solid：{name}")
-    return "\\n".join([
+    return "\n".join([
         "With STEP",
         "    .Reset",
         f"    .FileName ({_vba_string(str(target))})",
