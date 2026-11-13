@@ -36,6 +36,7 @@ def launch_viewer(path: str | Path) -> int:
         QComboBox,
         QDoubleSpinBox,
         QFormLayout,
+        QSpinBox,
         QLabel,
         QLineEdit,
         QMainWindow,
@@ -111,12 +112,16 @@ def launch_viewer(path: str | Path) -> int:
             self.answer = QLabel("尚未查询")
             self.answer.setWordWrap(True)
             right_layout.addWidget(self.answer)
-            right_layout.addWidget(QLabel("包围盒扫描步进（mm）"))
-            self.scan_step = QDoubleSpinBox()
-            self.scan_step.setRange(0.000001, 1e9)
-            self.scan_step.setDecimals(6)
-            self.scan_step.setValue(1.0)
-            right_layout.addWidget(self.scan_step)
+            right_layout.addWidget(QLabel("包围盒扫描点数（包含两端点）"))
+            self.scan_counts = []
+            scan_form = QFormLayout()
+            for axis in ("X", "Y", "Z"):
+                spin = QSpinBox()
+                spin.setRange(2, 2_000_000)
+                spin.setValue(30)
+                scan_form.addRow(f"{axis} 方向点数", spin)
+                self.scan_counts.append(spin)
+            right_layout.addLayout(scan_form)
             self.scan_button = QPushButton("扫描并导出 XYZ/value CSV")
             right_layout.addWidget(self.scan_button)
             self.scan_status = QLabel("value: -1 外部 / 0 表面 / 1 内部")
@@ -217,6 +222,11 @@ def launch_viewer(path: str | Path) -> int:
             feats = geometry_metrics(solids)
             self.active_features = feats
             b = feats["bbox_mm"]
+            for widget, center in zip(
+                (self.x, self.y, self.z),
+                ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2),
+            ):
+                widget.setValue(center)
             self.info.setText(
                 f"Solid ID: {rec['solid_id']}\n"
                 f"识别身份: {rec.get('part_type', 'UNKNOWN')} "
@@ -344,7 +354,8 @@ def launch_viewer(path: str | Path) -> int:
                     QApplication.processEvents()
                 result = scan_grid(
                     self.active_solids, self.active_features["bbox_mm"],
-                    self.scan_step.value(), filename, progress=progress,
+                    tuple(spin.value() for spin in self.scan_counts),
+                    filename, progress=progress,
                 )
                 self.scan_status.setText(
                     f"完成 {result['total']:,} 点：外 {result['outside']:,}、"
