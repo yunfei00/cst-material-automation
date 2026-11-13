@@ -32,11 +32,11 @@ def test_all_solid_failure_does_not_stop_following(tmp_path):
     result = export_all_solids(
         source, connect_fn=FakeEnv,
         catalog_fn=lambda project: {
-            "main:first": "Vacuum", "main:broken": "PEC", "main:last": "Vacuum"
+            "first:part": "Vacuum", "broken:part": "PEC", "last:part": "Vacuum"
         },
         export_fn=export,
     )
-    assert attempted == ["main:first", "main:broken", "main:last"]
+    assert attempted == ["first:part", "broken:part", "last:part"]
     assert (result["total"], result["success"], result["failed"]) == (3, 2, 1)
     assert result["status"] == "PARTIAL"
     assert result["items"][1]["error_type"] == "RuntimeError"
