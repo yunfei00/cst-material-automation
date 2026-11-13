@@ -11,6 +11,11 @@ import tempfile
 import time
 from pathlib import Path
 
+from cst_material.cad_rendering import (
+    RENDER_MODES,
+    query_point_mesh,
+    render_selected_solid,
+)
 from cst_material.knowledge_store import store_confirmation
 from cst_material.occt_geometry import (
     classify_point,
@@ -27,6 +32,7 @@ def launch_viewer(path: str | Path) -> int:
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
+        QComboBox,
         QDoubleSpinBox,
         QFormLayout,
         QLabel,
@@ -58,6 +64,7 @@ def launch_viewer(path: str | Path) -> int:
             self.active_solids = None
             self.tempdir = tempfile.TemporaryDirectory(prefix="cst_viewer_")
             self.preview_actor = None
+            self.active_mesh = None
             splitter = QSplitter(Qt.Orientation.Horizontal)
             self.setCentralWidget(splitter)
 
@@ -100,6 +107,15 @@ def launch_viewer(path: str | Path) -> int:
             self.answer = QLabel("尚未查询")
             self.answer.setWordWrap(True)
             right_layout.addWidget(self.answer)
+            right_layout.addWidget(QLabel("三维显示模式"))
+            self.render_mode = QComboBox()
+            self.render_mode.addItems(RENDER_MODES)
+            right_layout.addWidget(self.render_mode)
+            self.depth_cue = QCheckBox("增强深度层次（EDL，可关闭）")
+            right_layout.addWidget(self.depth_cue)
+            self.render_info = QLabel("工程模式：曲面明暗 + 折弯边 + 轮廓")
+            self.render_info.setWordWrap(True)
+            right_layout.addWidget(self.render_info)
             self.reset_button = QPushButton("重置三维视角")
             right_layout.addWidget(self.reset_button)
             right_layout.addWidget(QLabel("人工确认零件身份 / 材料"))
@@ -122,6 +138,8 @@ def launch_viewer(path: str | Path) -> int:
             self.tree.currentItemChanged.connect(self._select_solid)
             self.check_button.clicked.connect(self._query_point)
             self.reset_button.clicked.connect(self.plotter.reset_camera)
+            self.render_mode.currentTextChanged.connect(self._render_mode_changed)
+            self.depth_cue.toggled.connect(self._toggle_depth_cue)
             self.save_confirmation.clicked.connect(self._confirm_identity)
 
             if self.root:
@@ -176,17 +194,10 @@ def launch_viewer(path: str | Path) -> int:
                 mesh_path = Path(self.tempdir.name) / "single.stl"
                 mesh_path.unlink(missing_ok=True)
                 export_preview_stl(solids, mesh_path)
-            self.plotter.clear()
-            self.preview_actor = self.plotter.add_mesh(
-                pv.read(str(mesh_path)), color="#73a9d6", pickable=True
-            )
+            self.active_mesh = pv.read(str(mesh_path))
+            self._draw_active_mesh()
             self.active_solids = solids
             self.active_record = rec
-            self.plotter.view_isometric()
-            self.plotter.reset_camera()
-            self.plotter.enable_mesh_picking(
-                callback=self._on_picked, show=False, left_clicking=True
-            )
             feats = rec.get("features") or geometry_metrics(solids)
             self.info.setText(
                 f"Solid ID: {rec['solid_id']}\n"
@@ -209,6 +220,44 @@ def launch_viewer(path: str | Path) -> int:
             self.approve_material.setChecked(False)
             self.answer.setText("请输入 XYZ，判断是否在精确 B-rep 实体内部。")
 
+        def _draw_active_mesh(self):
+            if self.active_mesh is None:
+                return
+            self.preview_actor, edge_count, description = render_selected_solid(
+                self.plotter, self.active_mesh, self.render_mode.currentText()
+            )
+            self.render_info.setText(description)
+            self.plotter.view_isometric()
+            self.plotter.reset_camera()
+            self.plotter.enable_mesh_picking(
+                callback=self._on_picked, show=False, left_clicking=True
+            )
+            self.statusBar().showMessage(
+                f"渲染模式：{self.render_mode.currentText()}；折弯边 {edge_count}"
+            )
+
+        def _render_mode_changed(self, _mode):
+            if self.active_mesh is not None:
+                self._draw_active_mesh()
+
+        def _toggle_depth_cue(self, checked):
+            try:
+                if checked:
+                    self.plotter.enable_eye_dome_lighting()
+                else:
+                    self.plotter.disable_eye_dome_lighting()
+                self.plotter.render()
+                self.statusBar().showMessage(
+                    "深度层次增强已开启" if checked else "深度层次增强已关闭"
+                )
+            except (RuntimeError, AttributeError, ValueError) as exc:
+                self.depth_cue.blockSignals(True)
+                self.depth_cue.setChecked(False)
+                self.depth_cue.blockSignals(False)
+                self.render_info.setText(
+                    f"当前图形驱动不支持 EDL，已关闭：{type(exc).__name__}: {exc}"
+                )
+
         def _on_picked(self, _picked):
             if self.preview_actor is None:
                 return
@@ -225,9 +274,11 @@ def launch_viewer(path: str | Path) -> int:
             point = (self.x.value(), self.y.value(), self.z.value())
             try:
                 result = classify_point(self.active_solids, point)
-                self.plotter.add_points(
-                    [point], color="#ff7043", point_size=16,
-                    render_points_as_spheres=True, name="query_point",
+                self.plotter.add_mesh(
+                    query_point_mesh(point),
+                    style="points", color="#ff7043", point_size=16,
+                    render_points_as_spheres=True, lighting=False,
+                    pickable=False, name="query_point",
                 )
                 self.answer.setText(
                     f"精确实体判断：{result}\n点坐标(mm)：{point}"
