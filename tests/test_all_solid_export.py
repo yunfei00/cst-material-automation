@@ -1,0 +1,63 @@
+"""CST-free regression for all-Solid independent export."""
+import json
+
+from cst_material.all_solid_export import export_all_solids
+
+
+class FakeProject:
+    def close(self):
+        pass
+
+
+class FakeEnv:
+    def open_project(self, path):
+        return FakeProject()
+
+    def close(self):
+        pass
+
+
+def test_all_solid_failure_does_not_stop_following(tmp_path):
+    source = tmp_path / "sample.cst"
+    source.write_bytes(b"source")
+    attempted = []
+
+    def export(project, items):
+        name, target = items[0]
+        attempted.append(name)
+        if name == "main:broken":
+            raise RuntimeError("Not an object reference")
+        target.write_bytes(b"STEP" * 50)
+
+    result = export_all_solids(
+        source, connect_fn=FakeEnv,
+        catalog_fn=lambda project: {
+            "main:first": "Vacuum", "main:broken": "PEC", "main:last": "Vacuum"
+        },
+        export_fn=export,
+    )
+    assert attempted == ["main:first", "main:broken", "main:last"]
+    assert (result["total"], result["success"], result["failed"]) == (3, 2, 1)
+    assert result["status"] == "PARTIAL"
+    assert result["items"][1]["error_type"] == "RuntimeError"
+    assert "Write" in result["items"][1]["vba"]
+    assert result["items"][2]["status"] == "PASS"
+    assert source.read_bytes() == b"source"
+    report = json.loads(
+        (tmp_path / "sample.solid_export_diagnostic" / "report.json").read_text()
+    )
+    assert report["failed"] == 1
+    assert len(list((tmp_path / "sample.solid_export_diagnostic" / "steps").glob("*.step"))) == 2
+
+
+def test_all_solid_catalog_failure_logged(tmp_path):
+    source = tmp_path / "sample.cst"
+    source.write_bytes(b"source")
+
+    def broken(project):
+        raise RuntimeError("catalog error")
+
+    result = export_all_solids(source, connect_fn=FakeEnv, catalog_fn=broken)
+    assert result["status"] == "FAIL"
+    assert "catalog error" in result["error"]
+    assert (tmp_path / "sample.solid_export_diagnostic" / "report.json").exists()
