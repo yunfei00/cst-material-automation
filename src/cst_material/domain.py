@@ -1,6 +1,5 @@
 """Stable domain types independent of CST automation details."""
 from dataclasses import dataclass
-from enum import Enum
 
 
 @dataclass(frozen=True)
@@ -33,10 +32,3 @@ class Solid:
 class Material:
     name: str
     category: str | None = None
-
-
-class VerificationStatus(str, Enum):
-    PASS = "PASS"
-    FAIL = "FAIL"
-    BLOCKED = "BLOCKED"
-    NOT_RUN = "NOT_RUN"

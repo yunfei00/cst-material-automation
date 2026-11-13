@@ -1,0 +1,440 @@
+"""P3-C: documented CST non-history spatial query and cautious AABB analysis.
+
+CST 2025 official help:
+- Solid.GetLooseBoundingBoxOfShape(name, xmin, xmax, ymin, ymax, zmin, zmax)
+  returns a NON-TIGHT bounding box, designed for post-processing and forbidden
+  during history rebuild/structural macro execution.
+- Project.RunScript(path) executes a command script outside add_to_history.
+- CSTStudio.Application.2025 supports OLE automation and OpenFile(path).
+
+Actual COM + RunScript behavior must be validated on real CST 2025 SP1.
+"""
+from __future__ import annotations
+
+import math
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+import warnings
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+
+from cst_material.cst_bindings import _vba_string
+from cst_material.domain import BoundingBox
+from cst_material.p3_lock_diagnostics import identify_file_owners
+
+MARKER = "CST_P3_SPATIAL_V1"
+
+
+@dataclass(frozen=True)
+class SpatialFeature:
+    identifier: str
+    component: str | None
+    material: str | None
+    loose_bounds: BoundingBox | None
+    dimensions_project_unit: tuple[float, float, float] | None
+    bbox_midpoint_project_unit: tuple[float, float, float] | None
+    min_bbox_extent_project_unit: float | None
+
+
+@dataclass(frozen=True)
+class SpatialCatalog:
+    length_unit: str
+    length_unit_to_m: float
+    declared_solid_count: int
+    features: tuple[SpatialFeature, ...]
+    missing_bbox_count: int
+    cleanup_deferred: bool = False
+    cleanup_path: str | None = None
+    cleanup_diagnostics: dict | None = None
+
+
+def _number(value: str, what: str) -> float:
+    try:
+        result = float(value.strip())
+    except ValueError as exc:
+        raise RuntimeError(f"{what} 不是合法数值：{value!r}") from exc
+    if not math.isfinite(result):
+        raise RuntimeError(f"{what} 不能为 NaN 或 Inf")
+    return result
+
+
+def parse_spatial_data(rows: list[str]) -> SpatialCatalog:
+    """Reject truncated, duplicate or out-of-order results. No guessed bounds."""
+    if len(rows) < 4 or rows[0].strip() != MARKER:
+        raise RuntimeError("CST P3-C 输出文件缺少正确的版本标识")
+    unit = rows[1].strip()
+    if unit not in {"nm", "um", "mm", "cm", "m", "mil", "in", "ft"}:
+        raise RuntimeError(f"CST P3-C 未识别长度单位：{unit!r}")
+    to_m = _number(rows[2], "长度单位转换系数")
+    if to_m <= 0:
+        raise RuntimeError("长度单位转换系数必须大于零")
+    try:
+        declared = int(rows[3].strip())
+    except ValueError as exc:
+        raise RuntimeError("CST P3-C Solid 数量不是整数") from exc
+    if declared <= 0:
+        raise RuntimeError("CST P3-C 未检测到 Solid，或返回了无效数量")
+    cursor = 4
+    records: list[SpatialFeature] = []
+    for index in range(declared):
+        if cursor + 2 > len(rows):
+            raise RuntimeError(f"P3-C 第 {index + 1}/{declared} 个 Solid 记录不完整")
+        if cursor + 3 > len(rows):
+            raise RuntimeError(f"P3-C 第 {index + 1}/{declared} 个 Solid 材料记录不完整")
+        name, material, state = rows[cursor], rows[cursor + 1], rows[cursor + 2].strip()
+        cursor += 3
+        if not name or "\x00" in name or "\r" in name:
+            raise RuntimeError(f"P3-C 第 {index + 1} 个 Solid 名称无效")
+        if state == "MISSING":
+            bounds = dims = mid = smallest = None
+        elif state == "OK":
+            if cursor + 6 > len(rows):
+                raise RuntimeError(f"Solid {name!r} 的包围盒坐标不足六项")
+            xmin, xmax, ymin, ymax, zmin, zmax = [
+                _number(value, "包围盒坐标") for value in rows[cursor : cursor + 6]
+            ]
+            cursor += 6
+            if xmin > xmax or ymin > ymax or zmin > zmax:
+                raise RuntimeError(f"Solid {name!r} 包围盒的最小值大于最大值")
+            bounds = BoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)
+            dims = bounds.dimensions
+            mid = (
+                (xmin + xmax) / 2,
+                (ymin + ymax) / 2,
+                (zmin + zmax) / 2,
+            )
+            if not all(math.isfinite(v) for v in (*dims, *mid)):
+                raise RuntimeError(f"Solid {name!r} 的尺寸或包围盒中点溢出")
+            smallest = min(dims)
+        else:
+            raise RuntimeError(f"Solid {name!r} 返回未知状态：{state!r}")
+        component = name.rpartition(":")[0] or None
+        records.append(
+            SpatialFeature(
+                identifier=name,
+                component=component,
+                material=material or None,
+                loose_bounds=bounds,
+                dimensions_project_unit=dims,
+                bbox_midpoint_project_unit=mid,
+                min_bbox_extent_project_unit=smallest,
+            )
+        )
+    if cursor != len(rows):
+        raise RuntimeError(f"CST P3-C 结果有 {len(rows) - cursor} 行未解释数据")
+    if len({rec.identifier for rec in records}) != declared:
+        raise RuntimeError("CST P3-C 包围盒记录包含重复 Solid 名称")
+    return SpatialCatalog(
+        length_unit=unit,
+        length_unit_to_m=to_m,
+        declared_solid_count=declared,
+        features=tuple(records),
+        missing_bbox_count=sum(rec.loose_bounds is None for rec in records),
+    )
+
+
+def _bbox_separation(a: BoundingBox, b: BoundingBox) -> float:
+    """Lower bound on true solid separation, NOT measured surface distance."""
+    dx = max(0.0, a.xmin - b.xmax, b.xmin - a.xmax)
+    dy = max(0.0, a.ymin - b.ymax, b.ymin - a.ymax)
+    dz = max(0.0, a.zmin - b.zmax, b.zmin - a.zmax)
+    return math.hypot(math.hypot(dx, dy), dz)
+
+
+def analyze_neighbors(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
+    """Delegate to P3-D bounded-memory NumPy analysis (no full N x N matrix)."""
+    from cst_material.p3_neighbors import analyze_neighbors as analyze_batched
+
+    return analyze_batched(catalog, neighbor_limit)
+
+
+
+def summarize_spatial(catalog: SpatialCatalog, neighbor_limit: int) -> dict:
+    """JSON-ready metadata with explicit loose/non-tight geometry qualifiers."""
+    return {
+        "length_unit": catalog.length_unit,
+        "length_unit_to_m": catalog.length_unit_to_m,
+        "solid_count": catalog.declared_solid_count,
+        "missing_bbox_count": catalog.missing_bbox_count,
+        "cleanup_deferred": catalog.cleanup_deferred,
+        "cleanup_path": catalog.cleanup_path,
+        "cleanup_diagnostics": catalog.cleanup_diagnostics,
+        "bounds_type": "CST GetLooseBoundingBoxOfShape: non-tight AABB; upper extent, not exact geometry",
+        "features": [
+            {
+                **asdict(item),
+                "dimensions_m": tuple(
+                    value * catalog.length_unit_to_m
+                    for value in item.dimensions_project_unit
+                ) if item.dimensions_project_unit is not None else None,
+                "bbox_midpoint_m": tuple(
+                    value * catalog.length_unit_to_m
+                    for value in item.bbox_midpoint_project_unit
+                ) if item.bbox_midpoint_project_unit is not None else None,
+            }
+            for item in catalog.features
+        ],
+        "neighbors": analyze_neighbors(catalog, neighbor_limit),
+        "interpretation": (
+            "尺寸来自非紧包围盒，仅为上界；bbox_midpoint 不是实体质心；"
+            "包围盒间距只是实际几何间距的下界，0 不证明实体接触。"
+            "min_bbox_extent 不是已验证的真实厚度。"
+        ),
+    }
+
+
+def build_spatial_macro(result_path: Path) -> str:
+    """A VBA command script for Project.RunScript, never add_to_history."""
+    path_literal = _vba_string(str(result_path))
+    # Source is ASCII except output path; write via Windows ANSI encoding.
+    return "\n".join(
+        [
+            "Option Explicit",
+            "Sub Main()",
+            "Dim fh As Integer",
+            "Dim i As Long",
+            "Dim n As Long",
+            "Dim shapeName As String",
+            "Dim xmin As Double, xmax As Double",
+            "Dim ymin As Double, ymax As Double",
+            "Dim zmin As Double, zmax As Double",
+            "Dim found As Boolean",
+            "fh = FreeFile",
+            f"Open {path_literal} For Output As #fh",
+            f'Print #fh, "{MARKER}"',
+            'Print #fh, Units.GetUnit("Length")',
+            "Print #fh, Str(Units.GetGeometryUnitToSI)",
+            "n = Solid.GetNumberOfShapes",
+            "Print #fh, CStr(n)",
+            "For i = 0 To n",
+            "shapeName = Solid.GetNameOfShapeFromIndex(i)",
+            "If Len(shapeName) > 0 Then",
+            "Print #fh, shapeName",
+            "Print #fh, Solid.GetMaterialNameForShape(shapeName)",
+            "found = Solid.GetLooseBoundingBoxOfShape(shapeName, xmin, xmax, ymin, ymax, zmin, zmax)",
+            "If found Then",
+            'Print #fh, "OK"',
+            "Print #fh, Str(xmin)",
+            "Print #fh, Str(xmax)",
+            "Print #fh, Str(ymin)",
+            "Print #fh, Str(ymax)",
+            "Print #fh, Str(zmin)",
+            "Print #fh, Str(zmax)",
+            "Else",
+            'Print #fh, "MISSING"',
+            "End If",
+            "End If",
+            "Next i",
+            "Close #fh",
+            "End Sub",
+        ]
+    ) + "\n"
+
+
+# PowerShell OLE bridge avoids installing additional Python packages such as
+# pywin32 on the locked-down CST workstation. Crucially, do NOT call app.Quit:
+# COM may bind an existing user-run CST session. Quit only our temp project.
+COM_RUNNER = r"""
+$ErrorActionPreference = 'Stop'
+$app = $null
+$project = $null
+$events = New-Object 'System.Collections.Generic.List[string]'
+try {
+    $app = New-Object -ComObject 'CSTStudio.Application.2025'
+    $events.Add("application_connected")
+    $project = $app.OpenFile($env:CST_P3_SPATIAL_COPY)
+    if ($null -eq $project) { throw "CST OLE OpenFile returned null" }
+    $events.Add("temporary_project_opened")
+    $null = $project.RunScript($env:CST_P3_SPATIAL_MACRO)
+    $events.Add("macro_returned")
+} finally {
+    if ($null -ne $project) {
+        try {
+            $null = $project.Quit()
+            $events.Add("project_quit_returned")
+        } catch {
+            $events.Add("project_quit_failed")
+            Write-Warning "Could not close temporary CST project: $($_.Exception.Message)"
+        }
+        try {
+            if ([System.Runtime.InteropServices.Marshal]::IsComObject($project)) {
+                [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($project)
+            }
+        } catch {
+            Write-Warning "Could not release temporary CST project COM reference: $($_.Exception.Message)"
+        }
+    }
+    # Release only this PowerShell process's COM wrappers. NEVER app.Quit:
+    # the global application might have the user's other CST projects.
+    if ($null -ne $app) {
+        try {
+            if ([System.Runtime.InteropServices.Marshal]::IsComObject($app)) {
+                [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)
+            }
+        } catch {
+            Write-Warning "Could not release CST application COM reference: $($_.Exception.Message)"
+        }
+    }
+    $project = $null
+    $app = $null
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+    try {
+        $events.Add("powershell_com_finally_completed")
+        Set-Content -LiteralPath $env:CST_P3_SPATIAL_STATUS -Value $events -Encoding UTF8
+    } catch {
+        Write-Warning "Could not write P3-C COM lifecycle status: $($_.Exception.Message)"
+    }
+}
+"""
+
+
+def _cleanup_workdir(
+    work: Path, diagnostics: dict | None = None, *, attempts: int = 21,
+    sleep_seconds: float = 0.5,
+) -> bool:
+    """Trace Windows share-violation timing and try deletion for up to 10 s.
+
+    The first WinError32 triggers a read-only Windows Restart Manager owner
+    snapshot. On subsequent attempts record time to release and final result.
+    Never kill processes or hide the preceding VBA/COM failure.
+    """
+    started = time.monotonic()
+    report = diagnostics if diagnostics is not None else {}
+    report["cleanup_attempts"] = 0
+    report["lock_observed"] = False
+    for attempt in range(attempts):
+        report["cleanup_attempts"] = attempt + 1
+        try:
+            shutil.rmtree(work)
+            report["cleanup_ok"] = True
+            report["cleanup_elapsed_seconds"] = round(time.monotonic() - started, 3)
+            return True
+        except FileNotFoundError:
+            report["cleanup_ok"] = True
+            report["cleanup_elapsed_seconds"] = round(time.monotonic() - started, 3)
+            return True
+        except OSError as exc:
+            report["lock_observed"] = True
+            blocked = Path(exc.filename) if exc.filename else None
+            if "first_cleanup_failure" not in report:
+                relative = None
+                if blocked is not None:
+                    try:
+                        relative = blocked.resolve().relative_to(work.resolve()).as_posix()
+                    except ValueError:
+                        relative = blocked.name
+                report["first_cleanup_failure"] = {
+                    "file": relative,
+                    "winerror": getattr(exc, "winerror", None),
+                    "error_type": type(exc).__name__,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                }
+                if blocked is not None:
+                    report["first_owner_snapshot"] = identify_file_owners(blocked)
+            if attempt + 1 == attempts:
+                report["cleanup_ok"] = False
+                report["cleanup_elapsed_seconds"] = round(time.monotonic() - started, 3)
+                if blocked is not None:
+                    report["last_owner_snapshot"] = identify_file_owners(blocked)
+                warnings.warn(
+                    f"P3-C 临时目录仍被占用，清理失败（{type(exc).__name__}: {exc}），"
+                    f"保留本机临时目录：{work}。请在确认 CST 已释放该副本后清理。",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return False
+            time.sleep(sleep_seconds)
+    return False
+
+
+def query_spatial_from_copy(source: Path, timeout: int = 240) -> SpatialCatalog:
+    """Use CST's OLE Project.RunScript as a non-history experimental bridge.
+
+    Always copy the .cst first; never save it, call History, or quit the
+    global application. A locked temporary file must not hide the original
+    query failure or incorrectly produce a clean PASS.
+    """
+    if os.name != "nt":
+        raise RuntimeError("P3-C OLE 仅支持已安装 CST 的 Windows 系统")
+    if timeout < 30 or timeout > 1800:
+        raise ValueError("P3-C 超时范围必须为 30～1800 秒")
+    source = source.resolve(strict=True)
+    if not source.is_file() or source.suffix.casefold() != ".cst":
+        raise ValueError("P3-C 输入必须为已有 .cst 工程")
+    # Do not use TemporaryDirectory: its context manager raises a second
+    # WinError 32 if CST still holds the copied project at exit.
+    work = Path(tempfile.mkdtemp(prefix="cst_p3_spatial_"))
+    catalog: SpatialCatalog | None = None
+    cleanup_ok = False
+    cleanup_diagnostics: dict = {}
+    status_file = work / "com-lifecycle-status.txt"
+    try:
+        copied = work / source.name
+        try:
+            shutil.copy2(source, copied)
+        except PermissionError as exc:
+            raise RuntimeError(
+                "P3-C 复制源工程到临时目录时被 Windows 拒绝访问；"
+                "请确认原工程没有被其他进程独占，未尝试修改源工程"
+            ) from exc
+        output = work / "spatial-result.txt"
+        script = work / "spatial-query.bas"
+        bridge = work / "run-spatial.ps1"
+        script.write_text(build_spatial_macro(output), encoding="mbcs")
+        bridge.write_text(COM_RUNNER, encoding="utf-8-sig")
+        env = dict(os.environ)
+        env["CST_P3_SPATIAL_COPY"] = str(copied)
+        env["CST_P3_SPATIAL_MACRO"] = str(script)
+        env["CST_P3_SPATIAL_STATUS"] = str(status_file)
+        try:
+            result = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass", "-File", str(bridge),
+                ],
+                env=env, capture_output=True, text=True,
+                errors="replace", timeout=timeout, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # Do not kill CST.exe; it could be a user's active session.
+            raise RuntimeError(
+                "P3-C COM 脚本超时；请检查 CST 是否有阻塞对话框或运行中的宏，"
+                "不要直接终止用户的 CST 进程"
+            ) from exc
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"CST P3-C OLE/RunScript 失败：{message[-1600:]}")
+        if not output.is_file():
+            raise RuntimeError(
+                "CST OLE RunScript 没有生成空间查询文件；请确认 RunScript "
+                "在当前 CST 2025 SP1 是非 History 命令宏，并查看 CST 消息窗口"
+            )
+        try:
+            content = output.read_text(encoding="mbcs").splitlines()
+        except PermissionError as exc:
+            raise RuntimeError(
+                "P3-C 读取宏输出文件时仍被 CST 占用；"
+                "可能是 VBA 未关闭输出文件或尚未执行完毕"
+            ) from exc
+        catalog = parse_spatial_data(content)
+    finally:
+        if status_file.is_file():
+            try:
+                cleanup_diagnostics["com_lifecycle_events"] = (
+                    status_file.read_text(encoding="utf-8-sig").splitlines()
+                )
+            except OSError:
+                cleanup_diagnostics["com_lifecycle_events"] = ["read_failed"]
+        # This cleanup cannot raise, so it never masks a previous error.
+        cleanup_ok = _cleanup_workdir(work, cleanup_diagnostics)
+    assert catalog is not None
+    if not cleanup_ok:
+        return replace(
+            catalog, cleanup_deferred=True, cleanup_path=str(work),
+            cleanup_diagnostics=cleanup_diagnostics,
+        )
+    return replace(catalog, cleanup_diagnostics=cleanup_diagnostics)
