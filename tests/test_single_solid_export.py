@@ -87,4 +87,4 @@ def test_vendor_failure_keeps_diagnostic(tmp_path):
     assert "Not an object reference" in result["error"]
     assert "Write" in json.loads(
         (output / "diagnostic.json").read_text()
-    )["events"][4]["vba"]
+    )["events"][5]["vba"]
