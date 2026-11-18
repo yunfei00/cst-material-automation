@@ -15,7 +15,7 @@ def test_isolation_only_deletes_siblings(tmp_path):
     )
     assert 'Solid.Delete ("root/leaf:B")' in vba
     assert 'Solid.Delete ("root/leaf:A")' not in vba
-    assert '.Write ("root/leaf")' in vba
+    assert '.Write ("root/leaf:A")' in vba
 
 
 def test_reject_other_component(tmp_path):
