@@ -24,7 +24,8 @@ def planar_thickness_evidence(faces: list[dict]) -> dict:
     for i, a in enumerate(faces):
         for b in faces[i + 1:]:
             dot = _dot(a["normal"], b["normal"])
-            if abs(dot) < 0.985:
+            # Opposed face normals are expected for two sides of one sheet.
+            if dot > -0.985:
                 continue
             delta = [b["center"][k] - a["center"][k] for k in range(3)]
             separation = abs(_dot(delta, a["normal"]))
@@ -96,9 +97,12 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     cache = root / "shield_refinement.json"
     previous = {}
     if cache.is_file():
-        old = json.loads(cache.read_text(encoding="utf-8"))
-        if old.get("manifest_sha256") == manifest_hash:
-            previous = old.get("results", {})
+        try:
+            old = json.loads(cache.read_text(encoding="utf-8"))
+            if old.get("schema_version") == 1 and old.get("manifest_sha256") == manifest_hash:
+                previous = old.get("results", {})
+        except (OSError, ValueError, TypeError):
+            previous = {}
     results = {}
     summary = {"total": len(rows), "reused": 0, "failed": 0,
                "REVIEW_STRONG": 0, "REVIEW": 0, "LOW_EVIDENCE": 0}
