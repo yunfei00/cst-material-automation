@@ -230,7 +230,7 @@ def launch_viewer(path: str | Path) -> int:
                         for sid, item in verified.items()
                     ]}
                 elif (self.root / "manifest.json").is_file():
-                    manifest = load_manifest(self.root, verify_files=False)
+                    manifest = load_manifest(self.root, verify_files=False, require_files=False)
                     catalog = {"records": [
                         {"solid_id": item["solid_id"], "step": item["step"],
                          "material": item.get("material"), "part_type": "UNKNOWN",
@@ -482,6 +482,22 @@ def launch_viewer(path: str | Path) -> int:
             start = time.perf_counter()
             try:
                 file_path = (self.root / rec["step"]).resolve()
+                if not file_path.is_file():
+                    self.active_record = rec
+                    self.active_solids = None
+                    self.active_features = None
+                    self.active_mesh = None
+                    self.plotter.clear()
+                    self.info.setText(
+                        f"Solid ID: {rec['solid_id']}\\n"
+                        "STEP 文件不在当前输出目录；三维预览不可用。"
+                        "已提取的 SQLite 特征仍可用于检索和批量确认。"
+                    )
+                    self.answer.setText(
+                        "原始 STEP 缺失；可以搜索、勾选并保存结构样本，"
+                        "但无法查看三维，请复制完整导出目录以恢复预览。"
+                    )
+                    return
                 if rec.get("diagnostic_export") and "body_index" not in rec:
                     self.active_record = None
                     self.active_solids = None
