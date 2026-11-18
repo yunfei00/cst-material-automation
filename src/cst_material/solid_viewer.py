@@ -658,6 +658,10 @@ def launch_viewer(path: str | Path) -> int:
                     rec = self.record_lookup[item.text(0)]
                     row = (self.search_results or {}).get(rec["solid_id"])
                     if row:
+                        if self.pcb_only.isChecked() and row.get("z_min_mm") is not None:
+                            item.setText(1, f'主 PCB 候选 · {row["volume_mm3"]:.1f} mm³')
+                            item.setHidden(not visible)
+                            return visible
                         refined = self.refinement_results.get(rec["solid_id"])
                         if refined and refined.get("status") == "PASS" and row.get("candidate_type") == "SHIELD_CANDIDATE":
                             labels = {'REVIEW_STRONG': '较强候选', 'REVIEW': '待确认', 'LOW_EVIDENCE': '证据不足'}
