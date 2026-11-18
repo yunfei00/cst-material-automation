@@ -15,7 +15,7 @@ def _face_evidence(solids: list) -> list[dict]:
     from OCP.BRepGProp import BRepGProp
     from OCP.GeomAbs import GeomAbs_Plane
     from OCP.GProp import GProp_GProps
-    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
 
@@ -29,10 +29,11 @@ def _face_evidence(solids: list) -> list[dict]:
                 props = GProp_GProps()
                 BRepGProp.SurfaceProperties_s(face, props)
                 normal = adaptor.Plane().Axis().Direction()
+                sign = -1 if face.Orientation() == TopAbs_REVERSED else 1
                 center = props.CentreOfMass()
                 result.append({
                     "area": float(props.Mass()),
-                    "normal": (normal.X(), normal.Y(), normal.Z()),
+                    "normal": (sign * normal.X(), sign * normal.Y(), sign * normal.Z()),
                     "center": (center.X(), center.Y(), center.Z()),
                 })
             explorer.Next()
@@ -159,6 +160,7 @@ def analyze_shield_solids(solids: list) -> dict:
             "largest_planar_face_area_mm2": round(largest["area"], 6),
             "cap_area_share": round(cap_share, 6),
             "solid_body_count": len(solids),
+            "bbox_mm": metrics["bbox_mm"],
             "axial_cavity_probe": cavity,
         },
     }
