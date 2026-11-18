@@ -414,9 +414,22 @@ def launch_viewer(path: str | Path) -> int:
                         priority.get(self.refinement_results.get(row['solid_id'], {}).get('verdict'), 3),
                         -row['score'], row['solid_id'],
                     ))
-                    self._sort_tree_by_search_results(rows)
+                    # Present the refined shortlist, not the unchanged P5 set.
+                    # Keep uncertain and failed items for review; only exclude
+                    # successfully analysed low-evidence items from this view.
+                    excluded = [row for row in rows if (
+                        self.refinement_results.get(row['solid_id'], {}).get('status') == 'PASS'
+                        and self.refinement_results[row['solid_id']].get('verdict') == 'LOW_EVIDENCE'
+                    )]
+                    visible_rows = [row for row in rows if row not in excluded]
+                    self.search_results = {row['solid_id']: row for row in visible_rows}
+                    self._sort_tree_by_search_results(visible_rows)
                     self._filter_tree(self.search.text())
-                    self.search_summary.setText(f'二级精筛结束，退出码 {code}，统计：{report["summary"]}。点击候选查看三维；不自动赋材。')
+                    self.search_summary.setText(
+                        f'二级精筛：保留 {len(visible_rows)}，排除证据不足 {len(excluded)}；'
+                        f'失败 {report["summary"].get("failed", 0)}。'
+                        '排除仅影响当前视图，重新点击一级筛选可恢复；不自动赋材。'
+                    )
                 except (OSError, ValueError, KeyError) as exc:
                     self.search_summary.setText(f'读取精筛结果失败：{exc}')
 
