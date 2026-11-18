@@ -18,6 +18,7 @@ from cst_material.cad_rendering import (
     render_selected_solid,
 )
 from cst_material.diagnostic_catalog import load_diagnostic_catalog
+from cst_material.geometry_search import search_geometry
 from cst_material.knowledge_store import store_confirmation
 from cst_material.occt_geometry import (
     classify_point,
@@ -49,6 +50,7 @@ def launch_viewer(path: str | Path) -> int:
         QLineEdit,
         QMainWindow,
         QPushButton,
+        QHBoxLayout,
         QSpinBox,
         QSplitter,
         QTreeWidget,
@@ -71,6 +73,8 @@ def launch_viewer(path: str | Path) -> int:
             self.root = target if target.is_dir() else None
             self.records = []
             self.record_lookup = {}
+            self.search_results = None
+            self.tree_items = {}
             self.active_record = None
             self.active_solids = None
             self.component_bodies = {}
@@ -88,8 +92,18 @@ def launch_viewer(path: str | Path) -> int:
             self.search = QLineEdit()
             self.search.setPlaceholderText("输入完整 Solid ID 或关键字过滤")
             left_layout.addWidget(self.search)
+            search_actions = QHBoxLayout()
+            self.find_similar = QPushButton("以当前 Solid 搜索相似")
+            self.find_springs = QPushButton("筛选弹片候选")
+            self.clear_results = QPushButton("显示全部")
+            for button in (self.find_similar, self.find_springs, self.clear_results):
+                search_actions.addWidget(button)
+            left_layout.addLayout(search_actions)
+            self.search_summary = QLabel("选中 Solid 后可直接搜索，点击结果即可查看三维")
+            self.search_summary.setWordWrap(True)
+            left_layout.addWidget(self.search_summary)
             self.tree = QTreeWidget()
-            self.tree.setHeaderLabels(["Solid ID", "识别结果"])
+            self.tree.setHeaderLabels(["Solid ID", "识别结果 / 相似度"])
             left_layout.addWidget(self.tree)
             splitter.addWidget(left)
 
@@ -170,6 +184,9 @@ def launch_viewer(path: str | Path) -> int:
             splitter.setSizes([260, 880, 310])
 
             self.search.textChanged.connect(self._filter_tree)
+            self.find_similar.clicked.connect(self._find_similar_solids)
+            self.find_springs.clicked.connect(self._find_spring_candidates)
+            self.clear_results.clicked.connect(self._clear_search_results)
             self.tree.currentItemChanged.connect(self._select_solid)
             self.check_button.clicked.connect(self._query_point)
             self.scan_button.clicked.connect(self._scan_solid)
@@ -235,6 +252,10 @@ def launch_viewer(path: str | Path) -> int:
                             else (rec.get("candidate") or "UNKNOWN"),
                         ])
                         self.tree.addTopLevelItem(item)
+                self.tree_items = {
+                    self.tree.topLevelItem(i).text(0): self.tree.topLevelItem(i)
+                    for i in range(self.tree.topLevelItemCount())
+                }
                 self.tree.expandToDepth(1)
                 self.statusBar().showMessage(
                     f"已加载 {len(self.records)} 条导出记录；仅按需读取 STEP 几何"
@@ -244,6 +265,50 @@ def launch_viewer(path: str | Path) -> int:
             else:
                 self._display_step(target, {"solid_id": target.name, "step": str(target)})
 
+        def _find_similar_solids(self):
+            if self.active_record is None:
+                self.search_summary.setText("请先在左侧选中一个 Solid")
+                return
+            self._apply_geometry_search(reference_id=self.active_record["solid_id"])
+
+        def _find_spring_candidates(self):
+            self._apply_geometry_search(spring_candidates=True)
+
+        def _apply_geometry_search(self, *, reference_id=None, spring_candidates=False):
+            if not self.root:
+                self.search_summary.setText("请先打开已完成 P5 的导出目录")
+                return
+            try:
+                self.find_similar.setEnabled(False)
+                self.find_springs.setEnabled(False)
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                rows = search_geometry(
+                    self.root, reference_id=reference_id,
+                    spring_candidates=spring_candidates, limit=10000,
+                )
+                self.search_results = {row["solid_id"]: row for row in rows}
+                self.search.setText("")
+                self._filter_tree("")
+                self.search_summary.setText(
+                    f"检索结果 {len(rows)} 个；点击左侧条目查看三维。"
+                    "相似度仅表示几何接近，不代表零件身份确认。"
+                )
+                self.statusBar().showMessage(
+                    f"已过滤显示 {len(rows)} 个候选；可点击 Solid 查看"
+                )
+            except Exception as exc:  # noqa: BLE001 - GUI displays search errors
+                self.search_summary.setText(f"检索失败：{type(exc).__name__}: {exc}")
+            finally:
+                QApplication.restoreOverrideCursor()
+                self.find_similar.setEnabled(True)
+                self.find_springs.setEnabled(True)
+
+        def _clear_search_results(self):
+            self.search_results = None
+            self.search.setText("")
+            self._filter_tree("")
+            self.search_summary.setText("已恢复全部 Solid，可选择一个 Solid 再搜索相似")
+
         def _filter_tree(self, keyword):
             value = keyword.casefold().strip()
             def filter_node(item):
@@ -251,7 +316,24 @@ def launch_viewer(path: str | Path) -> int:
                                  for i in range(item.childCount())]
                 own_match = (value in item.text(0).casefold()
                              or value in item.text(1).casefold())
-                visible = own_match or any(child_matches)
+                in_results = self.search_results is None or (
+                    item.text(0) in self.search_results
+                )
+                visible = (own_match and in_results) or any(child_matches)
+                if item.childCount() == 0 and item.text(0) in self.record_lookup:
+                    rec = self.record_lookup[item.text(0)]
+                    row = (self.search_results or {}).get(rec["solid_id"])
+                    if row:
+                        similarity = row.get("similarity")
+                        item.setText(1, (
+                            f"相似度 {similarity:.4f}" if similarity is not None
+                            else "弹片形态候选 · 待确认"
+                        ))
+                    else:
+                        item.setText(1, (
+                            rec.get("part_type") if rec.get("part_type") != "UNKNOWN"
+                            else (rec.get("candidate") or "UNKNOWN")
+                        ))
                 item.setHidden(not visible)
                 if value and any(child_matches):
                     item.setExpanded(True)
