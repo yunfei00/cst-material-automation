@@ -1,9 +1,16 @@
 """Unit checks for bounded single-Solid STEP export experiment."""
+import importlib.util
 from pathlib import Path
 
 import pytest
 
-from test_single_solid_step_10 import build_single_solid_vba, export_ten_solids
+_spec = importlib.util.spec_from_file_location(
+    "cst_ten_solid_script", Path(__file__).resolve().parents[1] / "test_single_solid_step_10.py"
+)
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+build_single_solid_vba = _module.build_single_solid_vba
+export_ten_solids = _module.export_ten_solids
 
 
 def test_colon_object_path():
