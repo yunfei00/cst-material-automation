@@ -106,6 +106,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_similar = QPushButton("以当前 Solid 搜索相似")
             self.find_springs = QPushButton("筛选弹片候选")
             self.find_pcb = QPushButton("定位主 PCB（最大体积）")
+            self.pcb_only = QCheckBox("只显示主 PCB")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -116,6 +117,7 @@ def launch_viewer(path: str | Path) -> int:
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
             left_layout.addWidget(self.find_pcb)
+            left_layout.addWidget(self.pcb_only)
             left_layout.addWidget(self.inspect_shield)
             left_layout.addWidget(self.refine_shields)
             threshold_row = QHBoxLayout()
@@ -220,6 +222,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_similar.clicked.connect(self._find_similar_solids)
             self.find_springs.clicked.connect(self._find_spring_candidates)
             self.find_pcb.clicked.connect(self._find_main_pcb)
+            self.pcb_only.toggled.connect(self._toggle_pcb_only)
             self.find_shields.clicked.connect(self._find_shield_candidates)
             self.refine_shields.clicked.connect(self._refine_shield_candidates)
             self.inspect_shield.clicked.connect(self._inspect_shield)
@@ -362,6 +365,12 @@ def launch_viewer(path: str | Path) -> int:
                 QApplication.restoreOverrideCursor()
                 self.inspect_shield.setEnabled(True)
 
+        def _toggle_pcb_only(self, checked):
+            if checked:
+                self._find_main_pcb()
+            else:
+                self._clear_search_results()
+
         def _find_main_pcb(self):
             if not self.root:
                 self.search_summary.setText("请先打开 P5 几何特征目录")
@@ -370,14 +379,19 @@ def launch_viewer(path: str | Path) -> int:
                 result = find_main_pcb(self.root)
                 candidate = result["candidate"]
                 if candidate is None:
+                    self.search_results = {}
+                    self._filter_tree("")
                     self.search_summary.setText("未找到体积大于 1500 mm³ 的有效 Solid")
                     return
                 sid = candidate["solid_id"]
-                # Do not hide all other solids: select the PCB anchor and show
-                # the full model context for subsequent layer/region analysis.
-                self.search_results = None
+                # Checked: show only the candidate; unchecked: locate without filtering.
+                self.search_results = ({sid: candidate} if self.pcb_only.isChecked()
+                                       else None)
                 self.search.setText("")
-                self._restore_original_tree_order()
+                if self.search_results is None:
+                    self._restore_original_tree_order()
+                else:
+                    self._sort_tree_by_search_results([candidate])
                 self._filter_tree("")
                 item = self.tree_items.get(sid)
                 if item is not None:
@@ -582,6 +596,9 @@ def launch_viewer(path: str | Path) -> int:
                 )
 
         def _clear_search_results(self):
+            self.pcb_only.blockSignals(True)
+            self.pcb_only.setChecked(False)
+            self.pcb_only.blockSignals(False)
             self.search_results = None
             self._restore_original_tree_order()
             self.search.setText("")
