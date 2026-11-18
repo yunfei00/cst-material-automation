@@ -794,7 +794,8 @@ def launch_viewer(path: str | Path) -> int:
             dialog.exec()
 
         def _save_shape_sample(self):
-            if self.active_features is None or self.active_record is None:
+            if self.active_record is None:
+                self.similar_results.setText("请先选择一个 Solid")
                 return
             if self.active_record.get("diagnostic_export"):
                 self.similar_results.setText("未映射几何体不可保存为已确认 Solid 样本")
@@ -803,11 +804,31 @@ def launch_viewer(path: str | Path) -> int:
                 from cst_material.occt_geometry import sha256_file
 
                 source = self.root / self.active_record["step"] if self.root else target
-                digest = sha256_file(source)
+                if self.root and (self.root / "geometry_features.sqlite3").is_file():
+                    with sqlite3.connect(self.root / "geometry_features.sqlite3") as db:
+                        cached = db.execute(
+                            "SELECT step_sha256,features_json FROM solids "
+                            "WHERE solid_id=? AND status='PASS'",
+                            (self.active_record["solid_id"],),
+                        ).fetchone()
+                else:
+                    cached = None
+                if cached is not None:
+                    import json
+
+                    digest, metrics_json = cached
+                    metrics = json.loads(metrics_json)
+                else:
+                    if self.active_features is None:
+                        raise FileNotFoundError(
+                            "没有 STEP 也没有可用的 P5 特征记录，无法保存样本"
+                        )
+                    digest = sha256_file(source)
+                    metrics = self.active_features
                 sample_id = f"{digest[:16]}:{self.active_record['solid_id']}"
                 save_confirmed_sample(
                     self._sample_library_path(), sample_id,
-                    self.confirmed_type.text(), self.active_features,
+                    self.confirmed_type.text(), metrics,
                     source_sha256=digest,
                 )
                 self._refresh_shape_matches()
