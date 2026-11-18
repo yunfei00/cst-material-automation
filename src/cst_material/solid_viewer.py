@@ -697,6 +697,7 @@ def launch_viewer(path: str | Path) -> int:
                             '主厚度线索：' + str(thickness.get('dominant_thickness_mm', '未知')) + ' mm',
                             '平面配对一致性：' + str(thickness.get('pair_consistency', '未知')),
                             '横截面围合线索：' + str(refined.get('cross_section', {}).get('enclosed_section_count', '未知')) + '/3',
+                            '真实材料路径：' + str(refined.get('wall_paths', {}).get('material_path_count', '未知')) + '/' + str(refined.get('wall_paths', {}).get('checked_pair_count', '未知')),
                             *evidence,
                             '仅几何证据，不自动确认身份或赋材',
                         ]
