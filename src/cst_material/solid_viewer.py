@@ -723,7 +723,6 @@ def launch_viewer(path: str | Path) -> int:
                             return visible
                         refined = self.refinement_results.get(rec["solid_id"])
                         if refined and refined.get("status") == "PASS" and row.get("candidate_type") == "SHIELD_CANDIDATE":
-                            labels = {'REVIEW_STRONG': '较强候选', 'REVIEW': '待确认', 'LOW_EVIDENCE': '证据不足'}
                             item.setText(1, '屏蔽罩 · 几何匹配')
                             item.setHidden(not visible)
                             return visible
