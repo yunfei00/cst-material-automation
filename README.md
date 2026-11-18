@@ -1,5 +1,9 @@
 # CST Material Automation
 
+## 当前正确流程：逐 Solid 导出 STEP
+
+CST 2025 SP1 已验证 `STEP.Write("Component:Solid")` 可导出单个 Solid。**全量导出、断点续导、失败诊断和三维查看器操作统一参见 [逐 Solid STEP 全量导出操作手册](docs/per-solid-step-export-guide.md)**。旧的叶子组件级 STEP 导出流程已废弃，不要再按旧文档执行。
+
 ## 结构识别 V1（零件类别，不涉及材料）
 
 当前开发分支：`feat/solid-structure-recognition-v1`。已增加本地已确认结构样本库、几何特征提取、相似样本 Top-5 检索及 PySide6 人工确认入口。**安装、实机验收、反馈模板与 CI 验收记录请以 [结构识别 V1 验收文档](docs/structure-recognition-v1-verification.md) 为准。**
