@@ -75,6 +75,7 @@ def launch_viewer(path: str | Path) -> int:
             self.record_lookup = {}
             self.search_results = None
             self.tree_items = {}
+            self.original_tree_order = []
             self.active_record = None
             self.active_solids = None
             self.component_bodies = {}
@@ -252,6 +253,10 @@ def launch_viewer(path: str | Path) -> int:
                             else (rec.get("candidate") or "UNKNOWN"),
                         ])
                         self.tree.addTopLevelItem(item)
+                self.original_tree_order = [
+                    self.tree.topLevelItem(i).text(0)
+                    for i in range(self.tree.topLevelItemCount())
+                ]
                 self.tree_items = {
                     self.tree.topLevelItem(i).text(0): self.tree.topLevelItem(i)
                     for i in range(self.tree.topLevelItemCount())
@@ -287,6 +292,7 @@ def launch_viewer(path: str | Path) -> int:
                     spring_candidates=spring_candidates, limit=10000,
                 )
                 self.search_results = {row["solid_id"]: row for row in rows}
+                self._sort_tree_by_search_results(rows)
                 self.search.setText("")
                 self._filter_tree("")
                 self.search_summary.setText(
@@ -305,9 +311,48 @@ def launch_viewer(path: str | Path) -> int:
 
         def _clear_search_results(self):
             self.search_results = None
+            self._restore_original_tree_order()
             self.search.setText("")
             self._filter_tree("")
             self.search_summary.setText("已恢复全部 Solid，可选择一个 Solid 再搜索相似")
+
+        def _sort_tree_by_search_results(self, rows):
+            """Display matching Solids in descending similarity order."""
+            if not self.tree_items:
+                return
+            selected = self.tree.currentItem()
+            selected_id = selected.text(0) if selected is not None else None
+            self.tree.blockSignals(True)
+            try:
+                while self.tree.topLevelItemCount():
+                    self.tree.takeTopLevelItem(0)
+                ranked = [row["solid_id"] for row in rows if row["solid_id"] in self.tree_items]
+                remaining = [
+                    solid_id for solid_id in self.original_tree_order
+                    if solid_id not in self.search_results
+                ]
+                for solid_id in [*ranked, *remaining]:
+                    self.tree.addTopLevelItem(self.tree_items[solid_id])
+                if selected_id in self.tree_items:
+                    self.tree.setCurrentItem(self.tree_items[selected_id])
+            finally:
+                self.tree.blockSignals(False)
+
+        def _restore_original_tree_order(self):
+            if not self.tree_items:
+                return
+            selected = self.tree.currentItem()
+            selected_id = selected.text(0) if selected is not None else None
+            self.tree.blockSignals(True)
+            try:
+                while self.tree.topLevelItemCount():
+                    self.tree.takeTopLevelItem(0)
+                for solid_id in self.original_tree_order:
+                    self.tree.addTopLevelItem(self.tree_items[solid_id])
+                if selected_id in self.tree_items:
+                    self.tree.setCurrentItem(self.tree_items[selected_id])
+            finally:
+                self.tree.blockSignals(False)
 
         def _filter_tree(self, keyword):
             value = keyword.casefold().strip()
