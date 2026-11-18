@@ -110,6 +110,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
+            self.scan_all_shields = QPushButton("独立识别屏蔽罩（全量几何）")
             self.refine_process = None
             self.refinement_results = {}
             self.pcb_candidate_cache = None
@@ -121,6 +122,7 @@ def launch_viewer(path: str | Path) -> int:
             left_layout.addWidget(self.pcb_only)
             left_layout.addWidget(self.inspect_shield)
             left_layout.addWidget(self.refine_shields)
+            left_layout.addWidget(self.scan_all_shields)
             threshold_row = QHBoxLayout()
             threshold_row.addWidget(QLabel("最低相似度"))
             self.similarity_cutoff = QDoubleSpinBox()
@@ -226,6 +228,7 @@ def launch_viewer(path: str | Path) -> int:
             self.pcb_only.toggled.connect(self._toggle_pcb_only)
             self.find_shields.clicked.connect(self._find_shield_candidates)
             self.refine_shields.clicked.connect(self._refine_shield_candidates)
+            self.scan_all_shields.clicked.connect(self._scan_all_shield_geometry)
             self.inspect_shield.clicked.connect(self._inspect_shield)
             self.clear_results.clicked.connect(self._clear_search_results)
             self.batch_save.clicked.connect(self._save_checked_samples)
@@ -448,31 +451,45 @@ def launch_viewer(path: str | Path) -> int:
                 QApplication.restoreOverrideCursor()
                 self.find_shields.setEnabled(True)
 
-        def _refine_shield_candidates(self):
+        def _scan_all_shield_geometry(self):
+            self._refine_shield_candidates(exhaustive=True)
+
+        def _refine_shield_candidates(self, exhaustive=False):
             if not self.root or self.refine_process is not None:
                 return
-            self._find_shield_candidates()
-            if self.search_results is None:
-                return
+            if not exhaustive:
+                self._find_shield_candidates()
+                if self.search_results is None:
+                    return
             import sys
             process = QProcess(self)
             self.refine_process = process
             self.refine_shields.setEnabled(False)
-            self.search_summary.setText('二级精筛正在后台运行，请等待结果')
+            self.scan_all_shields.setEnabled(False)
+            self.search_summary.setText('全量几何识别正在后台运行' if exhaustive
+                                        else '二级精筛正在后台运行，请等待结果')
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
-            process.setArguments(['-m', 'cst_material.shield_refinement', str(self.root)])
+            args = ['-m', 'cst_material.shield_refinement', str(self.root)]
+            if exhaustive:
+                args.append('--exhaustive')
+            process.setArguments(args)
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
 
             def finished(code, _status):
                 import json
                 self.refine_process = None
                 self.refine_shields.setEnabled(True)
+                self.scan_all_shields.setEnabled(True)
                 try:
-                    report = json.loads((self.root / 'shield_refinement.json').read_text(encoding='utf-8'))
+                    filename = 'shield_refinement_all.json' if exhaustive else 'shield_refinement.json'
+                    report = json.loads((self.root / filename).read_text(encoding='utf-8'))
                     self.refinement_results = report['results']
                     priority = {'REVIEW_STRONG': 0, 'REVIEW': 1, 'LOW_EVIDENCE': 2}
-                    rows = list((self.search_results or {}).values())
+                    rows = ([{'solid_id': sid, 'score': 0,
+                              'candidate_type': 'SHIELD_CANDIDATE'}
+                             for sid in self.refinement_results if sid in self.tree_items]
+                            if exhaustive else list((self.search_results or {}).values()))
                     rows.sort(key=lambda row: (
                         priority.get(self.refinement_results.get(row['solid_id'], {}).get('verdict'), 3),
                         -row['score'], row['solid_id'],
@@ -508,6 +525,7 @@ def launch_viewer(path: str | Path) -> int:
             if not process.waitForStarted(3000):
                 self.refine_process = None
                 self.refine_shields.setEnabled(True)
+                self.scan_all_shields.setEnabled(True)
                 self.search_summary.setText(f'无法启动精筛进程：{process.errorString()}')
 
         def _find_spring_candidates(self):
