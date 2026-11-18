@@ -408,6 +408,13 @@ def launch_viewer(path: str | Path) -> int:
                 try:
                     report = json.loads((self.root / 'shield_refinement.json').read_text(encoding='utf-8'))
                     self.refinement_results = report['results']
+                    priority = {'REVIEW_STRONG': 0, 'REVIEW': 1, 'LOW_EVIDENCE': 2}
+                    rows = list((self.search_results or {}).values())
+                    rows.sort(key=lambda row: (
+                        priority.get(self.refinement_results.get(row['solid_id'], {}).get('verdict'), 3),
+                        -row['score'], row['solid_id'],
+                    ))
+                    self._sort_tree_by_search_results(rows)
                     self._filter_tree(self.search.text())
                     self.search_summary.setText(f'二级精筛结束，退出码 {code}，统计：{report["summary"]}。点击候选查看三维；不自动赋材。')
                 except (OSError, ValueError, KeyError) as exc:
