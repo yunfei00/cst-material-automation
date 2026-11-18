@@ -41,3 +41,6 @@ def test_search_shield_candidates_without_step(tmp_path):
     rows = search_shield_candidates(tmp_path)
     assert [row["solid_id"] for row in rows] == ["a:shield"]
     assert rows[0]["review_status"] == "NEEDS_REVIEW"
+    assert rows[0]["candidate_type"] == "SHIELD_CANDIDATE"
+    assert rows[0]["candidate"] is True
+    assert rows[0]["score"] == 100
