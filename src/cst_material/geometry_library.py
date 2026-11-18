@@ -6,12 +6,11 @@ import json
 import math
 import sqlite3
 import time
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cst_material.occt_geometry import analyze_step, sha256_file
 from cst_material.solid_index import load_manifest
-
 
 SCHEMA_VERSION = 1
 
