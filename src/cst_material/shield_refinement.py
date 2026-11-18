@@ -74,7 +74,7 @@ def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, fl
     # verdict from a single lucky point. 0.08/0.92 probe possible sidewalls.
     profiles = []
     for axial_fraction in (0.25, 0.5, 0.75):
-        def sample(u, v):
+        def sample(u, v, axial_fraction=axial_fraction):
             point = [(bbox[i] + bbox[i + 3]) * 0.5 for i in range(3)]
             point[principal] = bbox[principal] + axial_fraction * lengths[principal]
             point[lateral[0]] = bbox[lateral[0]] + u * lengths[lateral[0]]
