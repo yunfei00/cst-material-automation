@@ -24,7 +24,7 @@ from cst_material.occt_geometry import (
     geometry_metrics,
     read_step,
 )
-from cst_material.solid_index import ensure_preview_mesh, load_catalog
+from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_manifest
 from cst_material.solid_name_mapping import load_verified_mapping
 from cst_material.solid_scan import scan_grid
 from cst_material.structure_samples import (
@@ -188,6 +188,16 @@ def launch_viewer(path: str | Path) -> int:
                          "verified_solid_mapping": True}
                         for sid, item in verified.items()
                     ]}
+                elif (self.root / "manifest.json").is_file():
+                    manifest = load_manifest(self.root, verify_files=False)
+                    catalog = {"records": [
+                        {"solid_id": item["solid_id"], "step": item["step"],
+                         "material": item.get("material"), "part_type": "UNKNOWN",
+                         "identity_status": "UNREVIEWED",
+                         "candidate": "CST 原始 Solid 独立导出",
+                         "direct_solid_export": True}
+                        for item in manifest["solids"]
+                    ]}
                 elif (self.root / "report.json").is_file():
                     catalog = load_diagnostic_catalog(self.root)
                 else:
@@ -298,7 +308,7 @@ def launch_viewer(path: str | Path) -> int:
                         file_path, rec, solids=[bodies[rec["body_index"]]]
                     )
                 else:
-                    mesh_path = (None if rec.get("verified_solid_mapping")
+                    mesh_path = (None if (rec.get("verified_solid_mapping") or rec.get("direct_solid_export"))
                                  else ensure_preview_mesh(self.root, rec))
                     self._display_step(file_path, rec, mesh_path)
                 self.statusBar().showMessage(
