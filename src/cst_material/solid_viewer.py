@@ -466,6 +466,9 @@ def launch_viewer(path: str | Path) -> int:
         def _save_shape_sample(self):
             if self.active_features is None or self.active_record is None:
                 return
+            if self.active_record.get("diagnostic_export"):
+                self.similar_results.setText("未映射几何体不可保存为已确认 Solid 样本")
+                return
             try:
                 from cst_material.occt_geometry import sha256_file
 
