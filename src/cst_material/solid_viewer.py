@@ -248,6 +248,11 @@ def launch_viewer(path: str | Path) -> int:
             try:
                 file_path = (self.root / rec["step"]).resolve()
                 if rec.get("diagnostic_export") and "body_index" not in rec:
+                    self.active_record = None
+                    self.active_solids = None
+                    self.active_features = None
+                    self.active_mesh = None
+                    self.plotter.clear()
                     bodies = read_step(file_path)
                     self.component_bodies[rec["record_id"]] = bodies
                     if item.childCount() == 0:
