@@ -53,6 +53,58 @@ def planar_thickness_evidence(faces: list[dict]) -> dict:
     }
 
 
+
+def _verify_wall_segments(solids: list, faces: list[dict], thickness: dict) -> dict:
+    """Verify whether a proposed plane gap contains actual CAD material.
+
+    Surface centre separation alone can cross a cavity. Sample the exact BREP
+    classifier at three interior locations of opposed, approximately aligned
+    face pairs. This is a material-path check, NOT complete wall thickness.
+    """
+    from cst_material.occt_geometry import classify_point
+
+    if not thickness.get("supported"):
+        return {"supported": False, "reason": "没有候选厚度"}
+    target = thickness["dominant_thickness_mm"]
+    checked = 0
+    material_paths = 0
+    for i, a in enumerate(faces):
+        for b in faces[i + 1:]:
+            if _dot(a["normal"], b["normal"]) > -0.985:
+                continue
+            delta = [b["center"][k] - a["center"][k] for k in range(3)]
+            projection = _dot(delta, a["normal"])
+            gap = abs(projection)
+            if abs(gap - target) > max(0.03, target * 0.15):
+                continue
+            lateral = math.sqrt(max(0, sum(x*x for x in delta) - gap*gap))
+            if lateral > math.sqrt(min(a["area"], b["area"])) * 0.5:
+                continue
+            # Do not check arbitrarily many pair combinations on 8000+ solids.
+            if checked >= 32:
+                break
+            checked += 1
+            direction = 1 if projection > 0 else -1
+            states = [
+                classify_point(solids, tuple(
+                    a["center"][k] + direction * a["normal"][k] * gap * fraction
+                    for k in range(3)
+                ), tolerance=1e-6)
+                for fraction in (0.25, 0.5, 0.75)
+            ]
+            if all(state == "INSIDE" for state in states):
+                material_paths += 1
+        if checked >= 32:
+            break
+    return {
+        "supported": checked > 0,
+        "checked_pair_count": checked,
+        "material_path_count": material_paths,
+        "material_path_ratio": round(material_paths / checked, 4) if checked else 0,
+        "warning": "仅验证部分平面间隙穿过实体材料，不代表完整等厚",
+    }
+
+
 def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, float, float]) -> dict:
     """Check cavity centre and four lateral positions at several axial depths.
 
@@ -114,6 +166,7 @@ def refine_step(path: str | Path) -> dict:
     solids = read_step(path)
     faces = _face_evidence(solids)
     thickness = planar_thickness_evidence(faces)
+    wall_paths = _verify_wall_segments(solids, faces, thickness)
     shape = analyze_shield_solids(solids)
     # The old B-rep score is supporting evidence only, not a positive verdict.
     cavity = shape.get("metrics", {}).get("axial_cavity_probe", {})
@@ -130,6 +183,8 @@ def refine_step(path: str | Path) -> dict:
     strong = (
         thickness["supported"]
         and thickness["pair_consistency"] >= 0.75
+        and wall_paths.get("material_path_count", 0) >= 2
+        and wall_paths.get("material_path_ratio", 0) >= 0.6
         and walls >= 4
         and cavity.get("axial_void") is True
         and cavity.get("open_end_hint") is True
@@ -145,6 +200,7 @@ def refine_step(path: str | Path) -> dict:
         verdict = "REVIEW"
     return {
         "verdict": verdict, "thickness": thickness,
+        "wall_paths": wall_paths,
         "cross_section": enclosure,
         "brep": shape,
         "warning": "几何证据不能证明屏蔽功能；未进行完整等厚及开口连通性验证",
@@ -158,7 +214,7 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = "P8-B4-cross-section-v2-20261118"
+    algorithm_version = "P8-B4-material-path-v1-20261118"
     rows = search_shield_candidates(root)
     if limit is not None:
         if type(limit) is not int or limit < 1:
