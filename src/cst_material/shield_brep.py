@@ -13,8 +13,8 @@ from cst_material.occt_geometry import read_step
 def _face_evidence(solids: list) -> list[dict]:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
-    from OCP.GProp import GProp_GProps
     from OCP.GeomAbs import GeomAbs_Plane
+    from OCP.GProp import GProp_GProps
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
