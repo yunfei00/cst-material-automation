@@ -1,9 +1,9 @@
-"""CST 2025 STEP export adapter: exact per-Solid IDs, no ordering inference.
+"""CST 2025 STEP export adapter: Solid-scoped STEP.Write.
 
 The VBA STEP.Write command is documented in the CST VBA import/export family,
-but per-shape export and global coordinates still require actual CST 2025 SP1
+but component-level output and global coordinates still require actual CST 2025 SP1
 validation. On any unexpected result the adapter FAILS instead of making
-a fictitious geometry/Solid mapping.
+a fictitious geometry/Solid mapping. Verify each STEP contains the intended single Solid before treating it as mapped.
 """
 from __future__ import annotations
 
@@ -18,25 +18,32 @@ from pathlib import Path
 from cst_material.occt_geometry import sha256_file
 
 
+def build_step_export_vba(name: str, target: str | Path) -> str:
+    """Build STEP.Write with the original CST Component:Solid identity."""
+    from cst_material.cst_bindings import _vba_string
+
+    component, sep, solid = name.partition(":")
+    if not sep or not component or not solid:
+        raise ValueError(f"Solid ID 必须为 Component:Solid：{name}")
+    return "\n".join([
+        "With STEP",
+        "    .Reset",
+        f"    .FileName ({_vba_string(str(target))})",
+        "    .ExportFromActiveCoordinateSystem (False)",
+        f"    .Write ({_vba_string(name)})",
+        "End With",
+    ])
+
+
 def _export_step_batch(project, items: list[tuple[str, Path]]) -> None:
-    from cst_material.cst_bindings import _modeler, _vba_string
+    from cst_material.cst_bindings import _modeler
 
     # One History operation per Solid: identify the exact failing exporter.
     # Do not silently skip failures or claim a complete geometry database.
     for name, target in items:
-        component, sep, solid = name.partition(":")
-        if not sep or not component or not solid:
-            raise ValueError(f"Solid ID 必须为 Component:Solid：{name}")
         if target.exists():
             raise FileExistsError(target)
-        code = "\\n".join([
-            "With STEP",
-            "    .Reset",
-            f"    .FileName {_vba_string(str(target))}",
-            "    .ExportFromActiveCoordinateSystem False",
-            f"    .Write {_vba_string(component + '/' + solid)}",
-            "End With",
-        ])
+        code = build_step_export_vba(name, target)
         try:
             _modeler(project).add_to_history(
                 "CST Material Automation: export one Solid STEP", code,

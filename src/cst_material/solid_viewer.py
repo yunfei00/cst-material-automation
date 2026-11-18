@@ -16,6 +16,7 @@ from cst_material.cad_rendering import (
     query_point_mesh,
     render_selected_solid,
 )
+from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.knowledge_store import store_confirmation
 from cst_material.occt_geometry import (
     classify_point,
@@ -23,8 +24,14 @@ from cst_material.occt_geometry import (
     geometry_metrics,
     read_step,
 )
-from cst_material.solid_index import ensure_preview_mesh, load_catalog
+from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_manifest
+from cst_material.solid_name_mapping import load_verified_mapping
 from cst_material.solid_scan import scan_grid
+from cst_material.structure_samples import (
+    load_samples,
+    save_confirmed_sample,
+    search_similar_samples,
+)
 
 
 def launch_viewer(path: str | Path) -> int:
@@ -65,6 +72,7 @@ def launch_viewer(path: str | Path) -> int:
             self.record_lookup = {}
             self.active_record = None
             self.active_solids = None
+            self.component_bodies = {}
             self.tempdir = tempfile.TemporaryDirectory(prefix="cst_viewer_")
             self.preview_actor = None
             self.active_mesh = None
@@ -138,6 +146,12 @@ def launch_viewer(path: str | Path) -> int:
             right_layout.addWidget(self.render_info)
             self.reset_button = QPushButton("重置三维视角")
             right_layout.addWidget(self.reset_button)
+            right_layout.addWidget(QLabel("结构相似样本（仅零件类别）"))
+            self.similar_results = QLabel("暂无样本")
+            self.similar_results.setWordWrap(True)
+            right_layout.addWidget(self.similar_results)
+            self.save_shape_sample = QPushButton("确认类别并保存结构样本")
+            right_layout.addWidget(self.save_shape_sample)
             right_layout.addWidget(QLabel("人工确认零件身份 / 材料"))
             self.confirmed_type = QLineEdit()
             self.confirmed_type.setPlaceholderText("真实零件类别，例如 SPRING_CONTACT")
@@ -162,34 +176,88 @@ def launch_viewer(path: str | Path) -> int:
             self.render_mode.currentTextChanged.connect(self._render_mode_changed)
             self.depth_cue.toggled.connect(self._toggle_depth_cue)
             self.save_confirmation.clicked.connect(self._confirm_identity)
+            self.save_shape_sample.clicked.connect(self._save_shape_sample)
 
             if self.root:
-                catalog = load_catalog(self.root, verify_files=False)
+                if (self.root / "verified_solid_mapping.json").is_file():
+                    verified = load_verified_mapping(self.root)
+                    catalog = {"records": [
+                        {"solid_id": sid, "step": item["step"],
+                         "part_type": "UNKNOWN", "identity_status": "UNREVIEWED",
+                         "candidate": "CST 隔离导出验证", "material": None,
+                         "verified_solid_mapping": True}
+                        for sid, item in verified.items()
+                    ]}
+                elif (self.root / "manifest.json").is_file():
+                    manifest = load_manifest(self.root, verify_files=False)
+                    catalog = {"records": [
+                        {"solid_id": item["solid_id"], "step": item["step"],
+                         "material": item.get("material"), "part_type": "UNKNOWN",
+                         "identity_status": "UNREVIEWED",
+                         "candidate": "CST 原始 Solid 独立导出",
+                         "direct_solid_export": True}
+                        for item in manifest["solids"]
+                    ]}
+                elif (self.root / "report.json").is_file():
+                    catalog = load_diagnostic_catalog(self.root)
+                else:
+                    catalog = load_catalog(self.root, verify_files=False)
                 self.records = catalog["records"]
-                self.record_lookup = {rec["solid_id"]: rec for rec in self.records}
+                self.record_lookup = {
+                    rec.get("record_id", rec["solid_id"]): rec for rec in self.records
+                }
+                nodes = {}
                 for rec in self.records:
-                    item = QTreeWidgetItem([
-                        rec["solid_id"],
-                        rec.get("part_type") if rec.get("part_type") != "UNKNOWN"
-                        else (rec.get("candidate") or "UNKNOWN"),
-                    ])
-                    self.tree.addTopLevelItem(item)
+                    if rec.get("diagnostic_export"):
+                        component = rec["component"].replace("\\", "/")
+                        parent = None
+                        parts = component.split("/")
+                        for depth in range(1, len(parts) + 1):
+                            key = "/".join(parts[:depth])
+                            if key not in nodes:
+                                node = QTreeWidgetItem([parts[depth - 1], "组件"])
+                                if parent is None:
+                                    self.tree.addTopLevelItem(node)
+                                else:
+                                    parent.addChild(node)
+                                nodes[key] = node
+                            parent = nodes[key]
+                        item = QTreeWidgetItem([
+                            rec["record_id"],
+                            f"组件 STEP · CST Solid {len(rec.get('solid_ids', []))} 个",
+                        ])
+                        parent.addChild(item)
+                    else:
+                        item = QTreeWidgetItem([
+                            rec["solid_id"],
+                            rec.get("part_type") if rec.get("part_type") != "UNKNOWN"
+                            else (rec.get("candidate") or "UNKNOWN"),
+                        ])
+                        self.tree.addTopLevelItem(item)
+                self.tree.expandToDepth(1)
                 self.statusBar().showMessage(
-                    f"已加载 {len(self.records)} 条 Solid 索引；仅按需读取三维网格"
+                    f"已加载 {len(self.records)} 条导出记录；仅按需读取 STEP 几何"
                 )
-                if self.records:
+                if self.records and not self.records[0].get("diagnostic_export"):
                     self.tree.setCurrentItem(self.tree.topLevelItem(0))
             else:
                 self._display_step(target, {"solid_id": target.name, "step": str(target)})
 
         def _filter_tree(self, keyword):
             value = keyword.casefold().strip()
+            def filter_node(item):
+                child_matches = [filter_node(item.child(i))
+                                 for i in range(item.childCount())]
+                own_match = (value in item.text(0).casefold()
+                             or value in item.text(1).casefold())
+                visible = own_match or any(child_matches)
+                item.setHidden(not visible)
+                if value and any(child_matches):
+                    item.setExpanded(True)
+                return visible
+
             for pos in range(self.tree.topLevelItemCount()):
-                item = self.tree.topLevelItem(pos)
-                item.setHidden(
-                    value not in item.text(0).casefold()
-                    and value not in item.text(1).casefold()
-                )
+                filter_node(self.tree.topLevelItem(pos))
 
         def _select_solid(self, item, _previous):
             if item is None or not self.root:
@@ -200,17 +268,59 @@ def launch_viewer(path: str | Path) -> int:
             start = time.perf_counter()
             try:
                 file_path = (self.root / rec["step"]).resolve()
-                mesh_path = ensure_preview_mesh(self.root, rec)
-                self._display_step(file_path, rec, mesh_path)
+                if rec.get("diagnostic_export") and "body_index" not in rec:
+                    self.active_record = None
+                    self.active_solids = None
+                    self.active_features = None
+                    self.active_mesh = None
+                    self.plotter.clear()
+                    bodies = read_step(file_path)
+                    self.component_bodies[rec["record_id"]] = bodies
+                    if item.childCount() == 0:
+                        for index in range(len(bodies)):
+                            body_rec = {
+                                **rec,
+                                "record_id": f"{rec['record_id']}:body:{index}",
+                                "body_index": index,
+                                "solid_id": f"未映射几何体 {index + 1}",
+                                "candidate": "未建立 CST Solid 名称映射；禁止赋材料",
+                            }
+                            self.record_lookup[body_rec["record_id"]] = body_rec
+                            item.addChild(QTreeWidgetItem([
+                                body_rec["record_id"], body_rec["solid_id"],
+                            ]))
+                    item.setExpanded(True)
+                    expected = len(rec.get("solid_ids", []))
+                    mismatch = ("；数量与 CST Solid 不一致，请检查导出"
+                                if expected != len(bodies) else "")
+                    self.answer.setText(
+                        f"组件 STEP 几何实体 {len(bodies)} 个，CST Solid {expected} 个"
+                        f"{mismatch}。请展开选择单个几何体；尚未建立名称映射。"
+                    )
+                    return
+                if "body_index" in rec:
+                    bodies = self.component_bodies.get(
+                        rec["record_id"].split(":body:")[0]
+                    )
+                    if bodies is None:
+                        bodies = read_step(file_path)
+                    self._display_step(
+                        file_path, rec, solids=[bodies[rec["body_index"]]]
+                    )
+                else:
+                    mesh_path = (None if (rec.get("verified_solid_mapping") or rec.get("direct_solid_export"))
+                                 else ensure_preview_mesh(self.root, rec))
+                    self._display_step(file_path, rec, mesh_path)
                 self.statusBar().showMessage(
                     f"显示 {rec['solid_id']}：{time.perf_counter() - start:.3f}s"
                 )
             except Exception as exc:  # noqa: BLE001 - GUI must show unexpected geometry errors
                 self.answer.setText(f"读取失败：{type(exc).__name__}: {exc}")
 
-        def _display_step(self, file_path, rec, mesh_path=None):
+        def _display_step(self, file_path, rec, mesh_path=None, solids=None):
             start = time.perf_counter()
-            solids = read_step(file_path)
+            if solids is None:
+                solids = read_step(file_path)
             if mesh_path is None:
                 mesh_path = Path(self.tempdir.name) / "single.stl"
                 mesh_path.unlink(missing_ok=True)
@@ -221,6 +331,7 @@ def launch_viewer(path: str | Path) -> int:
             self.active_record = rec
             feats = geometry_metrics(solids)
             self.active_features = feats
+            self._refresh_shape_matches()
             b = feats["bbox_mm"]
             for widget, center in zip(
                 (self.x, self.y, self.z),
@@ -367,9 +478,49 @@ def launch_viewer(path: str | Path) -> int:
             finally:
                 self.scan_button.setEnabled(True)
 
+        def _sample_library_path(self):
+            return Path.home() / ".cst_material_automation" / "structure_samples_v1.json"
+
+        def _refresh_shape_matches(self):
+            try:
+                hits = search_similar_samples(
+                    self.active_features, load_samples(self._sample_library_path())
+                )
+                self.similar_results.setText("\n".join(
+                    f"{h['part_type']} / {h['sample_id']}: {h['similarity']:.3f}"
+                    for h in hits
+                ) if hits else "暂无已确认结构样本")
+            except Exception as exc:  # noqa: BLE001 - display local library errors
+                self.similar_results.setText(f"检索失败：{exc}")
+
+        def _save_shape_sample(self):
+            if self.active_features is None or self.active_record is None:
+                return
+            if self.active_record.get("diagnostic_export"):
+                self.similar_results.setText("未映射几何体不可保存为已确认 Solid 样本")
+                return
+            try:
+                from cst_material.occt_geometry import sha256_file
+
+                source = self.root / self.active_record["step"] if self.root else target
+                digest = sha256_file(source)
+                sample_id = f"{digest[:16]}:{self.active_record['solid_id']}"
+                save_confirmed_sample(
+                    self._sample_library_path(), sample_id,
+                    self.confirmed_type.text(), self.active_features,
+                    source_sha256=digest,
+                )
+                self._refresh_shape_matches()
+                self.statusBar().showMessage(f"已保存结构样本：{sample_id}")
+            except Exception as exc:  # noqa: BLE001 - display local library errors
+                self.similar_results.setText(f"保存失败：{exc}")
+
         def _confirm_identity(self):
             if not self.root or self.active_record is None:
                 self.answer.setText("请先选择来自几何索引的 Solid")
+                return
+            if self.active_record.get("diagnostic_export"):
+                self.answer.setText("组件 STEP 的几何体尚未映射到 CST Solid，禁止确认材料。")
                 return
             try:
                 target = store_confirmation(
