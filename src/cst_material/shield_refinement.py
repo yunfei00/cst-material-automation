@@ -112,8 +112,8 @@ def refine_step(path: str | Path) -> dict:
     # Exact bbox is obtained from the already loaded solids, never the mesh.
     from cst_material.occt_geometry import geometry_metrics
 
-    bbox = bbox or geometry_metrics(solids)["bbox_mm"]
     cap_faces = sorted(faces, key=lambda face: face["area"], reverse=True)
+    bbox = bbox or (geometry_metrics(solids)["bbox_mm"] if cap_faces else None)
     enclosure = _cavity_cross_section(solids, bbox, cap_faces[0]["normal"]) if cap_faces else {
         "supported": False, "reason": "缺少平面主面"
     }
