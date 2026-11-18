@@ -29,7 +29,11 @@ def search_geometry(
         metadata = connection.execute(
             "SELECT value FROM metadata WHERE key='manifest_sha256'"
         ).fetchone()
-        if metadata is None or metadata["value"] != sha256_file(root / "manifest.json"):
+        manifest_path = root / "manifest.json"
+        if metadata is None or (
+            manifest_path.is_file()
+            and metadata["value"] != sha256_file(manifest_path)
+        ):
             raise ValueError("P5 数据库与 manifest 不匹配，请重新构建")
         records = connection.execute(
             "SELECT solid_id,step,step_sha256,features_json FROM solids WHERE status='PASS'"
