@@ -6,9 +6,9 @@ import pytest
 from test_single_solid_step_10 import build_single_solid_vba, export_ten_solids
 
 
-def test_slash_object_path():
+def test_colon_object_path():
     code = build_single_solid_vba("Main/Leaf:Solid A", Path("one.step"))
-    assert '.Write ("Main/Leaf/Solid A")' in code
+    assert '.Write ("Main/Leaf:Solid A")' in code
     assert '.Write ("Main/Leaf")' not in code
 
 
