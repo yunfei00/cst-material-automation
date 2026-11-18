@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 
 from cst_material.occt_geometry import sha256_file
-from cst_material.shield_brep import _dot, _face_evidence, analyze_shield_step
+from cst_material.shield_brep import _dot, _face_evidence, analyze_shield_solids
 from cst_material.shield_recognition import search_shield_candidates
 
 
@@ -58,7 +58,7 @@ def refine_step(path: str | Path) -> dict:
     solids = read_step(path)
     faces = _face_evidence(solids)
     thickness = planar_thickness_evidence(faces)
-    shape = analyze_shield_step(path)
+    shape = analyze_shield_solids(solids)
     # The old B-rep score is supporting evidence only, not a positive verdict.
     cavity = shape.get("metrics", {}).get("axial_cavity_probe", {})
     walls = shape.get("metrics", {}).get("transverse_face_count", 0)
@@ -89,6 +89,7 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
+    algorithm_version = "P8-B4-20261118"
     rows = search_shield_candidates(root)
     if limit is not None:
         if type(limit) is not int or limit < 1:
@@ -99,7 +100,9 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("schema_version") == 1 and old.get("manifest_sha256") == manifest_hash:
+            if (old.get("schema_version") == 2
+                    and old.get("algorithm_version") == algorithm_version
+                    and old.get("manifest_sha256") == manifest_hash):
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             previous = {}
@@ -128,7 +131,8 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
         # Atomic checkpoint: interrupted runs resume from the last completed item.
         temporary = cache.with_suffix(".json.tmp")
         temporary.write_text(json.dumps({
-            "schema_version": 1, "manifest_sha256": manifest_hash,
+            "schema_version": 2, "algorithm_version": algorithm_version,
+            "manifest_sha256": manifest_hash,
             "summary": summary, "results": {**previous, **results},
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(cache)
