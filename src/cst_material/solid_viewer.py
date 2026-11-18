@@ -42,7 +42,7 @@ from cst_material.structure_samples import (
 
 def launch_viewer(path: str | Path) -> int:
     import pyvista as pv
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QProcess, Qt
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -106,11 +106,15 @@ def launch_viewer(path: str | Path) -> int:
             self.find_springs = QPushButton("筛选弹片候选")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
+            self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
+            self.refine_process = None
+            self.refinement_results = {}
             self.clear_results = QPushButton("显示全部")
             for button in (self.find_similar, self.find_springs, self.find_shields, self.clear_results):
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
             left_layout.addWidget(self.inspect_shield)
+            left_layout.addWidget(self.refine_shields)
             threshold_row = QHBoxLayout()
             threshold_row.addWidget(QLabel("最低相似度"))
             self.similarity_cutoff = QDoubleSpinBox()
@@ -213,6 +217,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_similar.clicked.connect(self._find_similar_solids)
             self.find_springs.clicked.connect(self._find_spring_candidates)
             self.find_shields.clicked.connect(self._find_shield_candidates)
+            self.refine_shields.clicked.connect(self._refine_shield_candidates)
             self.inspect_shield.clicked.connect(self._inspect_shield)
             self.clear_results.clicked.connect(self._clear_search_results)
             self.batch_save.clicked.connect(self._save_checked_samples)
@@ -380,6 +385,41 @@ def launch_viewer(path: str | Path) -> int:
                 QApplication.restoreOverrideCursor()
                 self.find_shields.setEnabled(True)
 
+        def _refine_shield_candidates(self):
+            if not self.root or self.refine_process is not None:
+                return
+            self._find_shield_candidates()
+            if self.search_results is None:
+                return
+            import sys
+            process = QProcess(self)
+            self.refine_process = process
+            self.refine_shields.setEnabled(False)
+            self.search_summary.setText('二级精筛正在后台运行，请等待结果')
+            process.setWorkingDirectory(str(self.root))
+            process.setProgram(sys.executable)
+            process.setArguments(['-m', 'cst_material.shield_refinement', str(self.root)])
+            process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+
+            def finished(code, _status):
+                import json
+                self.refine_process = None
+                self.refine_shields.setEnabled(True)
+                try:
+                    report = json.loads((self.root / 'shield_refinement.json').read_text(encoding='utf-8'))
+                    self.refinement_results = report['results']
+                    self._filter_tree(self.search.text())
+                    self.search_summary.setText(f'二级精筛结束，退出码 {code}，统计：{report["summary"]}。点击候选查看三维；不自动赋材。')
+                except (OSError, ValueError, KeyError) as exc:
+                    self.search_summary.setText(f'读取精筛结果失败：{exc}')
+
+            process.finished.connect(finished)
+            process.start()
+            if not process.waitForStarted(3000):
+                self.refine_process = None
+                self.refine_shields.setEnabled(True)
+                self.search_summary.setText(f'无法启动精筛进程：{process.errorString()}')
+
         def _find_spring_candidates(self):
             self._apply_geometry_search(spring_candidates=True)
 
@@ -537,6 +577,11 @@ def launch_viewer(path: str | Path) -> int:
                     rec = self.record_lookup[item.text(0)]
                     row = (self.search_results or {}).get(rec["solid_id"])
                     if row:
+                        refined = self.refinement_results.get(rec["solid_id"])
+                        if refined and refined.get("status") == "PASS" and row.get("candidate_type") == "SHIELD_CANDIDATE":
+                            item.setText(1, "屏蔽罩二级 · " + refined.get("verdict", "REVIEW"))
+                            item.setHidden(not visible)
+                            return visible
                         similarity = row.get("similarity")
                         item.setText(1, (
                             f"相似度 {similarity:.4f}" if similarity is not None
