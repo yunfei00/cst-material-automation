@@ -31,8 +31,8 @@ def test_per_solid_export_and_manifest(tmp_path):
         "root/leaf:a": "PEC", "root/leaf:b": "Vacuum",
         "root/other:c": "PEC",
     }
-    kw = dict(connect_fn=FakeEnv, catalog_fn=lambda _: catalog,
-              export_fn=export, geometry_fn=lambda _: [object()])
+    kw = {"connect_fn": FakeEnv, "catalog_fn": lambda _: catalog,
+          "export_fn": export, "geometry_fn": lambda _: [object()]}
     result = export_all_solids(source, **kw)
     assert attempted == list(catalog)
     assert (result["total"], result["success"], result["failed"]) == (3, 3, 0)
@@ -62,9 +62,9 @@ def test_failure_continues_and_resume_only_failed(tmp_path):
             raise RuntimeError("bad solid")
         target.write_bytes(b"STEP" * 50)
 
-    kw = dict(connect_fn=FakeEnv, catalog_fn=lambda _: {
+    kw = {"connect_fn": FakeEnv, "catalog_fn": lambda _: {
         "root:good": "PEC", "root:broken": "PEC", "root:last": "PEC",
-    }, export_fn=export, geometry_fn=lambda _: [object()])
+    }, "export_fn": export, "geometry_fn": lambda _: [object()]}
     first = export_all_solids(source, **kw)
     assert first["status"] == "PARTIAL"
     assert (first["success"], first["failed"]) == (2, 1)
