@@ -88,7 +88,7 @@ def _sample_cavity_axis(solids: list, bbox: list[float], axis: tuple[float, floa
     }
 
 
-def analyze_shield_step(path: str | Path) -> dict:
+def analyze_shield_solids(solids: list) -> dict:
     """Check planar cap, transverse walls and hollow material distribution.
 
     Does not claim a verified opening or uniform wall thickness. A closed
@@ -96,7 +96,6 @@ def analyze_shield_step(path: str | Path) -> dict:
     """
     from cst_material.occt_geometry import geometry_metrics
 
-    solids = read_step(path)
     metrics = geometry_metrics(solids)
     faces = _face_evidence(solids)
     dims = sorted(metrics["dimensions_mm"])
@@ -163,3 +162,8 @@ def analyze_shield_step(path: str | Path) -> dict:
             "axial_cavity_probe": cavity,
         },
     }
+
+
+def analyze_shield_step(path: str | Path) -> dict:
+    """Backward-compatible entrypoint for a STEP file."""
+    return analyze_shield_solids(read_step(path))
