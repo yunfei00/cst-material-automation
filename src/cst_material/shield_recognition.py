@@ -93,7 +93,7 @@ def search_shield_candidates(folder: str | Path, *, limit: int = 10000) -> list[
             continue
         if result["candidate"]:
             results.append({"solid_id": solid_id, "step": step,
-                            "similarity": None, "candidate": "SHIELD_CANDIDATE",
+                            "similarity": None, "candidate_type": "SHIELD_CANDIDATE",
                             "shape": "THIN_WALL_POSSIBLE",
                             "volume_mm3": features["volume_mm3"],
                             "dimensions_mm": features["dimensions_mm"], **result})
