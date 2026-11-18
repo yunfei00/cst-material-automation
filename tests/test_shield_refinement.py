@@ -42,7 +42,7 @@ def test_batch_resume_and_failure(tmp_path, monkeypatch):
     assert len(calls) == 1
     saved = json.loads((tmp_path / "shield_refinement.json").read_text(encoding="utf-8"))
     assert saved["schema_version"] == 2
-    assert saved["algorithm_version"] == "P8-B4-cross-section-v2-20261118"
+    assert saved["algorithm_version"] == "P8-B4-material-path-v1-20261118"
     assert saved["results"]["b"]["status"] == "FAIL"
     assert saved["results"]["a"]["verdict"] == "REVIEW"
 
@@ -73,6 +73,7 @@ def test_refine_step_reads_step_once(monkeypatch):
 
     monkeypatch.setattr(occt_geometry, 'read_step', read)
     monkeypatch.setattr(shield_refinement, '_face_evidence', lambda solids: [])
+    monkeypatch.setattr(shield_refinement, '_verify_wall_segments', lambda *args: {'supported': False})
     monkeypatch.setattr(shield_refinement, 'analyze_shield_solids', lambda solids: {
         'metrics': {'transverse_face_count': 0}, 'evidence': []
     })
@@ -124,3 +125,33 @@ def test_cross_section_invalid_axis_is_unknown():
         [object()], [0, 0, 0, 10, 10, 10], (float("nan"), 0, 1)
     )
     assert not result["supported"]
+
+
+def test_wall_path_rejects_cavity_gap(monkeypatch):
+    from cst_material import occt_geometry
+
+    faces = [
+        {"normal": (0, 0, 1), "center": (0, 0, 0), "area": 100},
+        {"normal": (0, 0, -1), "center": (0, 0, 0.2), "area": 100},
+    ]
+    thickness = shield_refinement.planar_thickness_evidence(faces)
+    monkeypatch.setattr(occt_geometry, "classify_point",
+                        lambda solids, point, tolerance: "OUTSIDE")
+    result = shield_refinement._verify_wall_segments([object()], faces, thickness)
+    assert result["checked_pair_count"] == 1
+    assert result["material_path_count"] == 0
+
+
+def test_wall_path_accepts_material_gap(monkeypatch):
+    from cst_material import occt_geometry
+
+    faces = [
+        {"normal": (0, 0, 1), "center": (0, 0, 0), "area": 100},
+        {"normal": (0, 0, -1), "center": (0, 0, 0.2), "area": 100},
+    ]
+    thickness = shield_refinement.planar_thickness_evidence(faces)
+    monkeypatch.setattr(occt_geometry, "classify_point",
+                        lambda solids, point, tolerance: "INSIDE")
+    result = shield_refinement._verify_wall_segments([object()], faces, thickness)
+    assert result["material_path_count"] == 1
+    assert result["material_path_ratio"] == 1
