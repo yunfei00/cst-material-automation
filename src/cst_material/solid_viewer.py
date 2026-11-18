@@ -413,6 +413,13 @@ def launch_viewer(path: str | Path) -> int:
                 except (OSError, ValueError, KeyError) as exc:
                     self.search_summary.setText(f'读取精筛结果失败：{exc}')
 
+            def on_output():
+                output = bytes(process.readAllStandardOutput()).decode('utf-8', errors='replace')
+                lines = [line.strip() for line in output.splitlines() if line.strip()]
+                if lines:
+                    self.search_summary.setText('二级精筛进度：' + lines[-1][:180])
+
+            process.readyReadStandardOutput.connect(on_output)
             process.finished.connect(finished)
             process.start()
             if not process.waitForStarted(3000):
@@ -579,7 +586,8 @@ def launch_viewer(path: str | Path) -> int:
                     if row:
                         refined = self.refinement_results.get(rec["solid_id"])
                         if refined and refined.get("status") == "PASS" and row.get("candidate_type") == "SHIELD_CANDIDATE":
-                            item.setText(1, "屏蔽罩二级 · " + refined.get("verdict", "REVIEW"))
+                            labels = {'REVIEW_STRONG': '较强候选', 'REVIEW': '待确认', 'LOW_EVIDENCE': '证据不足'}
+                            item.setText(1, '屏蔽罩二级 · ' + labels.get(refined.get('verdict'), '未知'))
                             item.setHidden(not visible)
                             return visible
                         similarity = row.get("similarity")
