@@ -19,7 +19,6 @@ from cst_material.cad_rendering import (
 )
 from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.geometry_search import search_geometry
-from cst_material.shield_recognition import search_shield_candidates
 from cst_material.knowledge_store import store_confirmation
 from cst_material.occt_geometry import (
     classify_point,
@@ -27,6 +26,7 @@ from cst_material.occt_geometry import (
     geometry_metrics,
     read_step,
 )
+from cst_material.shield_recognition import search_shield_candidates
 from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_manifest
 from cst_material.solid_name_mapping import load_verified_mapping
 from cst_material.solid_scan import scan_grid
