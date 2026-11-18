@@ -672,6 +672,21 @@ def launch_viewer(path: str | Path) -> int:
                     mesh_path = (None if (rec.get("verified_solid_mapping") or rec.get("direct_solid_export"))
                                  else ensure_preview_mesh(self.root, rec))
                     self._display_step(file_path, rec, mesh_path)
+                refined = self.refinement_results.get(rec['solid_id'])
+                if refined:
+                    if refined.get('status') == 'PASS':
+                        thickness = refined.get('thickness', {})
+                        evidence = refined.get('brep', {}).get('evidence', [])
+                        details = [
+                            '二级精筛：' + refined.get('verdict', '未知'),
+                            '主厚度线索：' + str(thickness.get('dominant_thickness_mm', '未知')) + ' mm',
+                            '平面配对一致性：' + str(thickness.get('pair_consistency', '未知')),
+                            *evidence,
+                            '仅几何证据，不自动确认身份或赋材',
+                        ]
+                        self.similar_results.setText(chr(10).join(details))
+                    else:
+                        self.similar_results.setText('二级精筛失败：' + refined.get('error', '未知'))
                 self.statusBar().showMessage(
                     f"显示 {rec['solid_id']}：{time.perf_counter() - start:.3f}s"
                 )
