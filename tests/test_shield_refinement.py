@@ -79,3 +79,30 @@ def test_refine_step_reads_step_once(monkeypatch):
     result = shield_refinement.refine_step('dummy.step')
     assert len(calls) == 1
     assert result['verdict'] == 'LOW_EVIDENCE'
+
+def test_cross_section_rejects_open_plate(monkeypatch):
+    from cst_material import occt_geometry
+
+    monkeypatch.setattr(occt_geometry, "classify_point",
+                        lambda solids, point, tolerance: "OUTSIDE")
+    result = shield_refinement._cavity_cross_section(
+        [object()], [0, 0, 0, 10, 10, 10], (0, 0, 1)
+    )
+    assert result["supported"]
+    assert result["enclosed_section_count"] == 0
+    assert not result["wall_enclosure_hint"]
+
+
+def test_cross_section_wall_hint(monkeypatch):
+    from cst_material import occt_geometry
+
+    def classify(solids, point, tolerance):
+        x, y, _ = point
+        return "INSIDE" if x < 1 or x > 9 or y < 1 or y > 9 else "OUTSIDE"
+
+    monkeypatch.setattr(occt_geometry, "classify_point", classify)
+    result = shield_refinement._cavity_cross_section(
+        [object()], [0, 0, 0, 10, 10, 10], (0, 0, 1)
+    )
+    assert result["wall_enclosure_hint"]
+    assert result["enclosed_section_count"] == 3
