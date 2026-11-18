@@ -25,13 +25,14 @@ def load_diagnostic_catalog(folder: str | Path) -> dict:
         if not resolved.is_file() or resolved.suffix.lower() not in {".step", ".stp"}:
             raise ValueError(f"诊断 STEP 文件不存在：{resolved}")
         records.append({
+            "record_id": f"component:{len(records)}",
             "solid_id": solid_id,
             "step": str(resolved.relative_to(root)),
             "diagnostic_export": True,
             "component": item.get("component", solid_id.rpartition(":")[0]),
             "solid_ids": item.get("solid_ids", [solid_id]),
             "part_type": "UNKNOWN",
-            "candidate": "组件级导出（可能包含多个 Solid）",
+            "candidate": "组件级 STEP；点击后应拆分几何体",
             "identity_status": "UNREVIEWED",
             "material": None,
         })
