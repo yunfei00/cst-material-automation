@@ -63,6 +63,8 @@ def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, fl
 
     if len(bbox) != 6 or not all(math.isfinite(v) for v in bbox):
         return {"supported": False, "reason": "缺少有效包围盒"}
+    if len(axis) != 3 or not all(math.isfinite(v) for v in axis):
+        return {'supported': False, 'reason': '无效主面法向'}
     principal = max(range(3), key=lambda i: abs(axis[i]))
     if abs(axis[principal]) < 0.94:
         return {"supported": False, "reason": "非轴对齐结构，暂不推断围合"}
@@ -91,10 +93,17 @@ def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, fl
         p["center"] == "OUTSIDE" and p["side_material_count"] >= 3
         for p in profiles
     )
+    all_solid_sections = sum(p["center"] == "INSIDE" for p in profiles)
+    empty_sections = sum(
+        p["center"] == "OUTSIDE" and p["side_material_count"] == 0
+        for p in profiles
+    )
     return {
         "supported": True,
         "profiles": profiles,
         "enclosed_section_count": enclosed_sections,
+        "all_solid_section_count": all_solid_sections,
+        "empty_section_count": empty_sections,
         "wall_enclosure_hint": enclosed_sections >= 2,
         "warning": "仅离散横截面采样，不证明连续壁或真实开口",
     }
@@ -129,7 +138,7 @@ def refine_step(path: str | Path) -> dict:
     if strong:
         verdict = "REVIEW_STRONG"
     elif (walls < 2 or (enclosure.get("supported") and
-                        enclosure.get("enclosed_section_count") == 0)
+                        enclosure.get("all_solid_section_count") == 3)
           or (thickness["supported"] and thickness["pair_consistency"] < 0.35)):
         verdict = "LOW_EVIDENCE"
     else:
@@ -149,7 +158,7 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = "P8-B4-cross-section-20261118"
+    algorithm_version = "P8-B4-cross-section-v2-20261118"
     rows = search_shield_candidates(root)
     if limit is not None:
         if type(limit) is not int or limit < 1:
