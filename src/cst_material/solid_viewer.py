@@ -30,6 +30,7 @@ from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_man
 from cst_material.solid_name_mapping import load_verified_mapping
 from cst_material.solid_scan import scan_grid
 from cst_material.structure_samples import (
+    delete_confirmed_samples,
     load_samples,
     save_confirmed_sample,
     save_confirmed_samples_batch,
@@ -45,11 +46,13 @@ def launch_viewer(path: str | Path) -> int:
         QCheckBox,
         QComboBox,
         QDoubleSpinBox,
+        QDialog,
         QFileDialog,
         QFormLayout,
         QHBoxLayout,
         QLabel,
         QLineEdit,
+        QListWidget,
         QMainWindow,
         QMessageBox,
         QPushButton,
@@ -181,6 +184,8 @@ def launch_viewer(path: str | Path) -> int:
             self.similar_results = QLabel("暂无样本")
             self.similar_results.setWordWrap(True)
             right_layout.addWidget(self.similar_results)
+            self.manage_samples = QPushButton("管理已确认结构样本")
+            right_layout.addWidget(self.manage_samples)
             self.save_shape_sample = QPushButton("确认类别并保存结构样本")
             right_layout.addWidget(self.save_shape_sample)
             right_layout.addWidget(QLabel("人工确认零件身份 / 材料"))
@@ -212,6 +217,7 @@ def launch_viewer(path: str | Path) -> int:
             self.depth_cue.toggled.connect(self._toggle_depth_cue)
             self.save_confirmation.clicked.connect(self._confirm_identity)
             self.save_shape_sample.clicked.connect(self._save_shape_sample)
+            self.manage_samples.clicked.connect(self._manage_shape_samples)
 
             if self.root:
                 if (self.root / "verified_solid_mapping.json").is_file():
@@ -716,6 +722,45 @@ def launch_viewer(path: str | Path) -> int:
                 ) if hits else "暂无已确认结构样本")
             except Exception as exc:  # noqa: BLE001 - display local library errors
                 self.similar_results.setText(f"检索失败：{exc}")
+
+        def _manage_shape_samples(self):
+            dialog = QDialog(self)
+            dialog.setWindowTitle("已确认结构样本管理")
+            dialog.resize(650, 420)
+            layout = QVBoxLayout(dialog)
+            listing = QListWidget()
+            listing.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+            samples = load_samples(self._sample_library_path())["samples"]
+            for sample in samples:
+                listing.addItem(f"{sample['part_type']} | {sample['sample_id']}")
+            layout.addWidget(listing)
+            layout.addWidget(QLabel("删除仅影响本机结构样本库，不修改 CST 工程或材料。"))
+            delete_button = QPushButton("删除选中的样本")
+            layout.addWidget(delete_button)
+
+            def delete_selected():
+                indices = sorted(
+                    (listing.row(item) for item in listing.selectedItems()),
+                    reverse=True,
+                )
+                if not indices:
+                    return
+                ids = [samples[i]["sample_id"] for i in indices]
+                if QMessageBox.question(
+                    dialog, "确认删除", f"确认删除 {len(ids)} 个已确认结构样本？",
+                ) != QMessageBox.StandardButton.Yes:
+                    return
+                try:
+                    delete_confirmed_samples(self._sample_library_path(), ids)
+                    for i in indices:
+                        listing.takeItem(i)
+                        samples.pop(i)
+                    self._refresh_shape_matches()
+                except Exception as exc:  # noqa: BLE001 - show local errors
+                    QMessageBox.warning(dialog, "删除失败", str(exc))
+
+            delete_button.clicked.connect(delete_selected)
+            dialog.exec()
 
         def _save_shape_sample(self):
             if self.active_features is None or self.active_record is None:
