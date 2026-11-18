@@ -42,7 +42,7 @@ def test_batch_resume_and_failure(tmp_path, monkeypatch):
     assert len(calls) == 1
     saved = json.loads((tmp_path / "shield_refinement.json").read_text(encoding="utf-8"))
     assert saved["schema_version"] == 2
-    assert saved["algorithm_version"] == "P8-B4-cross-section-20261118"
+    assert saved["algorithm_version"] == "P8-B4-cross-section-v2-20261118"
     assert saved["results"]["b"]["status"] == "FAIL"
     assert saved["results"]["a"]["verdict"] == "REVIEW"
 
@@ -106,3 +106,21 @@ def test_cross_section_wall_hint(monkeypatch):
     )
     assert result["wall_enclosure_hint"]
     assert result["enclosed_section_count"] == 3
+
+def test_cross_section_solid_block(monkeypatch):
+    from cst_material import occt_geometry
+
+    monkeypatch.setattr(occt_geometry, "classify_point",
+                        lambda solids, point, tolerance: "INSIDE")
+    result = shield_refinement._cavity_cross_section(
+        [object()], [0, 0, 0, 10, 10, 10], (0, 0, 1)
+    )
+    assert result["all_solid_section_count"] == 3
+    assert result["enclosed_section_count"] == 0
+
+
+def test_cross_section_invalid_axis_is_unknown():
+    result = shield_refinement._cavity_cross_section(
+        [object()], [0, 0, 0, 10, 10, 10], (float("nan"), 0, 1)
+    )
+    assert not result["supported"]
