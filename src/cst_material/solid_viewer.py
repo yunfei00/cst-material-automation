@@ -112,6 +112,7 @@ def launch_viewer(path: str | Path) -> int:
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
             self.refine_process = None
             self.refinement_results = {}
+            self.pcb_candidate_cache = None
             self.clear_results = QPushButton("显示全部")
             for button in (self.find_similar, self.find_springs, self.find_shields, self.clear_results):
                 search_actions.addWidget(button)
@@ -371,28 +372,39 @@ def launch_viewer(path: str | Path) -> int:
             else:
                 self._clear_search_results()
 
+        def _apply_pcb_visibility(self, candidate_id=None):
+            """Batch hide other solids without expensive reordering."""
+            self.tree.setUpdatesEnabled(False)
+            self.tree.blockSignals(True)
+            try:
+                for sid, item in self.tree_items.items():
+                    item.setHidden(candidate_id is not None and sid != candidate_id)
+            finally:
+                self.tree.blockSignals(False)
+                self.tree.setUpdatesEnabled(True)
+
         def _find_main_pcb(self):
             if not self.root:
                 self.search_summary.setText("请先打开 P5 几何特征目录")
                 return
             try:
-                result = find_main_pcb(self.root)
+                if self.pcb_candidate_cache is None:
+                    self.pcb_candidate_cache = find_main_pcb(self.root)
+                result = self.pcb_candidate_cache
                 candidate = result["candidate"]
                 if candidate is None:
                     self.search_results = {}
-                    self._filter_tree("")
+                    self._apply_pcb_visibility("__no_pcb_candidate__")
                     self.search_summary.setText("未找到体积大于 1500 mm³ 的有效 Solid")
                     return
                 sid = candidate["solid_id"]
                 # Checked: show only the candidate; unchecked: locate without filtering.
                 self.search_results = ({sid: candidate} if self.pcb_only.isChecked()
                                        else None)
-                self.search.setText("")
-                if self.search_results is None:
-                    self._restore_original_tree_order()
-                else:
-                    self._sort_tree_by_search_results([candidate])
-                self._filter_tree("")
+                self.search.blockSignals(True)
+                self.search.clear()
+                self.search.blockSignals(False)
+                self._apply_pcb_visibility(sid if self.pcb_only.isChecked() else None)
                 item = self.tree_items.get(sid)
                 if item is not None:
                     self.tree.setCurrentItem(item)
@@ -600,9 +612,10 @@ def launch_viewer(path: str | Path) -> int:
             self.pcb_only.setChecked(False)
             self.pcb_only.blockSignals(False)
             self.search_results = None
-            self._restore_original_tree_order()
-            self.search.setText("")
-            self._filter_tree("")
+            self.search.blockSignals(True)
+            self.search.clear()
+            self.search.blockSignals(False)
+            self._apply_pcb_visibility()
             self.search_summary.setText("已恢复全部 Solid，可选择一个 Solid 再搜索相似")
 
         def _sort_tree_by_search_results(self, rows):
