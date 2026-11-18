@@ -127,7 +127,7 @@ def export_all_solids(
                 if env is not None:
                     try:
                         env.close()
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - CST vendor cleanup
                         report["events"].append({"stage": "ENV_CLOSE_ERROR", "error": str(exc)})
         if sha256_file(source) != source_hash:
             raise RuntimeError("导出期间原工程发生变化")
