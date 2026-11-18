@@ -486,6 +486,14 @@ def launch_viewer(path: str | Path) -> int:
             import sys
             process = QProcess(self)
             self.refine_process = process
+            # Clear any previous similarity/spring/PCB results immediately.
+            # Until analysis completes, never display unrelated recognition scores.
+            self.search_results = {}
+            self.refinement_results = {}
+            self.search.blockSignals(True)
+            self.search.clear()
+            self.search.blockSignals(False)
+            self._filter_tree("")
             self.shield_only.setEnabled(False)
             self.search_summary.setText('屏蔽罩识别正在后台运行' if exhaustive
                                         else '二级精筛正在后台运行，请等待结果')
@@ -505,38 +513,39 @@ def launch_viewer(path: str | Path) -> int:
                     filename = 'shield_refinement_all.json' if exhaustive else 'shield_refinement.json'
                     report = json.loads((self.root / filename).read_text(encoding='utf-8'))
                     self.refinement_results = report['results']
-                    priority = {'REVIEW_STRONG': 0, 'REVIEW': 1, 'LOW_EVIDENCE': 2}
-                    rows = ([{'solid_id': sid, 'score': 0,
-                              'candidate_type': 'SHIELD_CANDIDATE'}
-                             for sid in self.refinement_results if sid in self.tree_items]
-                            if exhaustive else list((self.search_results or {}).values()))
-                    rows.sort(key=lambda row: (
-                        priority.get(self.refinement_results.get(row['solid_id'], {}).get('verdict'), 3),
-                        -row['score'], row['solid_id'],
-                    ))
-                    # Present the refined shortlist, not the unchanged P5 set.
-                    # Keep uncertain and failed items for review; only exclude
-                    # successfully analysed low-evidence items from this view.
-                    excluded = [row for row in rows if (
-                        self.refinement_results.get(row['solid_id'], {}).get('status') == 'PASS'
-                        and self.refinement_results[row['solid_id']].get('verdict') == 'LOW_EVIDENCE'
-                    )]
-                    visible_rows = [row for row in rows if row not in excluded]
-                    self.search_results = {row['solid_id']: row for row in visible_rows}
-                    self._filter_tree(self.search.text())
+                    # A single geometry verdict drives both visibility and label.
+                    # REVIEW is inconclusive, not a confirmed shield.
+                    # Failed STEP analysis is never displayed as a positive result.
+                    accepted = {'REVIEW_STRONG'}
+                    visible_rows = [
+                        {'solid_id': sid, 'candidate_type': 'SHIELD_CANDIDATE',
+                         'score': 0}
+                        for sid, evidence in self.refinement_results.items()
+                        if evidence.get('status') == 'PASS'
+                        and evidence.get('verdict') in accepted
+                        and sid in self.tree_items
+                    ]
+                    if self.shield_only.isChecked():
+                        self.search_results = {
+                            row['solid_id']: row for row in visible_rows
+                        }
+                        self._filter_tree("")
                     self.search_summary.setText(
-                        f'屏蔽罩：显示 {len(visible_rows)}，排除 {len(excluded)}；'
-                        f'失败 {report["summary"].get("failed", 0)}。'
-                        '几何识别结果仍需核对，不自动赋材。'
+                        f'屏蔽罩识别完成：符合严格几何条件 {len(visible_rows)} 个；'
+                        f'待确认 {report["summary"].get("REVIEW", 0)} 个；'
+                        f'无法分析 {report["summary"].get("failed", 0)} 个。'
+                        '当前仅显示严格匹配项；不自动赋材。'
                     )
                 except (OSError, ValueError, KeyError) as exc:
-                    self.search_summary.setText(f'读取精筛结果失败：{exc}')
+                    self.search_results = {}
+                    self._filter_tree('')
+                    self.search_summary.setText(f'屏蔽罩识别失败：{exc}')
 
             def on_output():
                 output = bytes(process.readAllStandardOutput()).decode('utf-8', errors='replace')
                 lines = [line.strip() for line in output.splitlines() if line.strip()]
                 if lines:
-                    self.search_summary.setText('二级精筛进度：' + lines[-1][:180])
+                    self.search_summary.setText('屏蔽罩识别进度：' + lines[-1][:180])
 
             process.readyReadStandardOutput.connect(on_output)
             process.finished.connect(finished)
@@ -544,7 +553,7 @@ def launch_viewer(path: str | Path) -> int:
             if not process.waitForStarted(3000):
                 self.refine_process = None
                 self.shield_only.setEnabled(True)
-                self.search_summary.setText(f'无法启动精筛进程：{process.errorString()}')
+                self.search_summary.setText(f'无法启动屏蔽罩识别：{process.errorString()}')
 
         def _find_spring_candidates(self):
             self._apply_geometry_search(spring_candidates=True)
@@ -715,7 +724,7 @@ def launch_viewer(path: str | Path) -> int:
                         refined = self.refinement_results.get(rec["solid_id"])
                         if refined and refined.get("status") == "PASS" and row.get("candidate_type") == "SHIELD_CANDIDATE":
                             labels = {'REVIEW_STRONG': '较强候选', 'REVIEW': '待确认', 'LOW_EVIDENCE': '证据不足'}
-                            item.setText(1, '屏蔽罩 · ' + labels.get(refined.get('verdict'), '未知'))
+                            item.setText(1, '屏蔽罩 · 几何匹配')
                             item.setHidden(not visible)
                             return visible
                         similarity = row.get("similarity")
