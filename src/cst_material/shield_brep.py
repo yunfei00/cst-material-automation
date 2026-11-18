@@ -160,7 +160,7 @@ def analyze_shield_solids(solids: list) -> dict:
             "largest_planar_face_area_mm2": round(largest["area"], 6),
             "cap_area_share": round(cap_share, 6),
             "solid_body_count": len(solids),
-            "bbox_mm": metrics["bbox_mm"],
+            "bbox_mm": metrics.get("bbox_mm"),
             "axial_cavity_probe": cavity,
         },
     }
