@@ -19,6 +19,7 @@ from cst_material.cad_rendering import (
 )
 from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.geometry_search import search_geometry
+from cst_material.shield_recognition import search_shield_candidates
 from cst_material.knowledge_store import store_confirmation
 from cst_material.occt_geometry import (
     classify_point,
@@ -102,8 +103,9 @@ def launch_viewer(path: str | Path) -> int:
             search_actions = QHBoxLayout()
             self.find_similar = QPushButton("以当前 Solid 搜索相似")
             self.find_springs = QPushButton("筛选弹片候选")
+            self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.clear_results = QPushButton("显示全部")
-            for button in (self.find_similar, self.find_springs, self.clear_results):
+            for button in (self.find_similar, self.find_springs, self.find_shields, self.clear_results):
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
             threshold_row = QHBoxLayout()
@@ -207,6 +209,7 @@ def launch_viewer(path: str | Path) -> int:
             self.search.textChanged.connect(self._filter_tree)
             self.find_similar.clicked.connect(self._find_similar_solids)
             self.find_springs.clicked.connect(self._find_spring_candidates)
+            self.find_shields.clicked.connect(self._find_shield_candidates)
             self.clear_results.clicked.connect(self._clear_search_results)
             self.batch_save.clicked.connect(self._save_checked_samples)
             self.tree.currentItemChanged.connect(self._select_solid)
@@ -312,6 +315,30 @@ def launch_viewer(path: str | Path) -> int:
                 self.search_summary.setText("请先在左侧选中一个 Solid")
                 return
             self._apply_geometry_search(reference_id=self.active_record["solid_id"])
+
+        def _find_shield_candidates(self):
+            if not self.root:
+                self.search_summary.setText("请先打开 P5 特征目录")
+                return
+            try:
+                self.find_shields.setEnabled(False)
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                rows = search_shield_candidates(self.root)
+                self.search_results = {row["solid_id"]: row for row in rows}
+                self._sort_tree_by_search_results(rows)
+                self.search.setText("")
+                self._filter_tree("")
+                self.search_summary.setText(
+                    f"屏蔽罩初筛候选 {len(rows)} 个；评分仅反映几何启发式证据，"
+                    "并未验证顶板、侧壁或开口。必须人工核实，不自动赋材。"
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.search_summary.setText(
+                    f"屏蔽罩筛选失败：{type(exc).__name__}: {exc}"
+                )
+            finally:
+                QApplication.restoreOverrideCursor()
+                self.find_shields.setEnabled(True)
 
         def _find_spring_candidates(self):
             self._apply_geometry_search(spring_candidates=True)
@@ -473,7 +500,11 @@ def launch_viewer(path: str | Path) -> int:
                         similarity = row.get("similarity")
                         item.setText(1, (
                             f"相似度 {similarity:.4f}" if similarity is not None
-                            else "弹片形态候选 · 待确认"
+                            else (
+                                f"屏蔽罩初筛 {row['score']}/100 · 待确认"
+                                if row.get("candidate") == "SHIELD_CANDIDATE"
+                                else "弹片形态候选 · 待确认"
+                            )
                         ))
                     else:
                         item.setText(1, (
