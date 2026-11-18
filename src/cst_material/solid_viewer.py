@@ -363,6 +363,9 @@ def launch_viewer(path: str | Path) -> int:
                 rows = search_shield_candidates(self.root)
                 self.search_results = {row["solid_id"]: row for row in rows}
                 self._sort_tree_by_search_results(rows)
+                for solid_id, item in self.tree_items.items():
+                    if solid_id in self.search_results:
+                        item.setCheckState(0, Qt.CheckState.Unchecked)
                 self.search.setText("")
                 self._filter_tree("")
                 self.search_summary.setText(
@@ -539,7 +542,7 @@ def launch_viewer(path: str | Path) -> int:
                             f"相似度 {similarity:.4f}" if similarity is not None
                             else (
                                 f"屏蔽罩初筛 {row['score']}/100 · 待确认"
-                                if row.get("candidate") == "SHIELD_CANDIDATE"
+                                if row.get("candidate_type") == "SHIELD_CANDIDATE"
                                 else "弹片形态候选 · 待确认"
                             )
                         ))
