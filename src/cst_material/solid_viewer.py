@@ -382,6 +382,10 @@ def launch_viewer(path: str | Path) -> int:
                 self._exclusive_filter(self.shield_only)
                 self._scan_all_shield_geometry()
             else:
+                if self.refine_process is not None:
+                    process = self.refine_process
+                    self.refine_process = None
+                    process.kill()
                 self._clear_search_results()
 
         def _toggle_spring_only(self, checked):
@@ -494,7 +498,6 @@ def launch_viewer(path: str | Path) -> int:
             self.search.clear()
             self.search.blockSignals(False)
             self._filter_tree("")
-            self.shield_only.setEnabled(False)
             self.search_summary.setText('屏蔽罩识别正在后台运行' if exhaustive
                                         else '二级精筛正在后台运行，请等待结果')
             process.setWorkingDirectory(str(self.root))
@@ -507,8 +510,9 @@ def launch_viewer(path: str | Path) -> int:
 
             def finished(code, _status):
                 import json
+                if self.refine_process is not process:
+                    return
                 self.refine_process = None
-                self.shield_only.setEnabled(True)
                 try:
                     filename = 'shield_refinement_all.json' if exhaustive else 'shield_refinement.json'
                     report = json.loads((self.root / filename).read_text(encoding='utf-8'))
@@ -552,7 +556,6 @@ def launch_viewer(path: str | Path) -> int:
             process.start()
             if not process.waitForStarted(3000):
                 self.refine_process = None
-                self.shield_only.setEnabled(True)
                 self.search_summary.setText(f'无法启动屏蔽罩识别：{process.errorString()}')
 
         def _find_spring_candidates(self):
