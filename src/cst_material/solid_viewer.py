@@ -20,13 +20,13 @@ from cst_material.cad_rendering import (
 from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.geometry_search import search_geometry
 from cst_material.knowledge_store import store_confirmation
-from cst_material.pcb_recognition import find_main_pcb
 from cst_material.occt_geometry import (
     classify_point,
     export_preview_stl,
     geometry_metrics,
     read_step,
 )
+from cst_material.pcb_recognition import find_main_pcb
 from cst_material.shield_brep import analyze_shield_step
 from cst_material.shield_recognition import search_shield_candidates
 from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_manifest
