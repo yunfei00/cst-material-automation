@@ -41,6 +41,8 @@ def test_batch_resume_and_failure(tmp_path, monkeypatch):
     assert second["summary"]["reused"] == 1
     assert len(calls) == 1
     saved = json.loads((tmp_path / "shield_refinement.json").read_text(encoding="utf-8"))
+    assert saved["schema_version"] == 2
+    assert saved["algorithm_version"] == "P8-B4-20261118"
     assert saved["results"]["b"]["status"] == "FAIL"
     assert saved["results"]["a"]["verdict"] == "REVIEW"
 
@@ -59,3 +61,21 @@ def test_corrupt_checkpoint_is_recovered(tmp_path, monkeypatch):
     monkeypatch.setattr(shield_refinement, 'search_shield_candidates', lambda _: [])
     result = shield_refinement.refine_candidates(tmp_path)
     assert result['summary']['total'] == 0
+
+
+def test_refine_step_reads_step_once(monkeypatch):
+    from cst_material import occt_geometry
+
+    calls = []
+    def read(path):
+        calls.append(path)
+        return [object()]
+
+    monkeypatch.setattr(occt_geometry, 'read_step', read)
+    monkeypatch.setattr(shield_refinement, '_face_evidence', lambda solids: [])
+    monkeypatch.setattr(shield_refinement, 'analyze_shield_solids', lambda solids: {
+        'metrics': {'transverse_face_count': 0}, 'evidence': []
+    })
+    result = shield_refinement.refine_step('dummy.step')
+    assert len(calls) == 1
+    assert result['verdict'] == 'LOW_EVIDENCE'
