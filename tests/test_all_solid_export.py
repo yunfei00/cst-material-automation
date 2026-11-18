@@ -1,4 +1,4 @@
-"""CST-free regression for all-Solid independent export."""
+"""Offline regression for correct per-Solid STEP export and resume."""
 import json
 
 from cst_material.all_solid_export import export_all_solids
@@ -17,7 +17,7 @@ class FakeEnv:
         pass
 
 
-def test_all_solid_failure_does_not_stop_following(tmp_path):
+def test_per_solid_export_and_manifest(tmp_path):
     source = tmp_path / "sample.cst"
     source.write_bytes(b"source")
     attempted = []
@@ -25,70 +25,64 @@ def test_all_solid_failure_does_not_stop_following(tmp_path):
     def export(project, items):
         name, target = items[0]
         attempted.append(name)
-        if name == "broken:part":
-            raise RuntimeError("Not an object reference")
         target.write_bytes(b"STEP" * 50)
 
-    result = export_all_solids(
-        source, connect_fn=FakeEnv,
-        catalog_fn=lambda project: {
-            "first:part": "Vacuum", "broken:part": "PEC", "last:part": "Vacuum"
-        },
-        export_fn=export,
-    )
-    assert attempted == ["first:part", "broken:part", "last:part"]
-    assert (result["total"], result["success"], result["failed"]) == (3, 2, 1)
-    assert result["status"] == "PARTIAL"
-    assert result["items"][1]["error_type"] == "RuntimeError"
-    assert "Write" in result["items"][1]["vba"]
-    assert result["items"][2]["status"] == "PASS"
+    catalog = {
+        "root/leaf:a": "PEC", "root/leaf:b": "Vacuum",
+        "root/other:c": "PEC",
+    }
+    kw = dict(connect_fn=FakeEnv, catalog_fn=lambda _: catalog,
+              export_fn=export, geometry_fn=lambda _: [object()])
+    result = export_all_solids(source, **kw)
+    assert attempted == list(catalog)
+    assert (result["total"], result["success"], result["failed"]) == (3, 3, 0)
+    assert result["status"] == "PASS"
+    assert '.Write ("root/leaf:a")' in result["items"][0]["vba"]
+    folder = tmp_path / "sample.solid_export_diagnostic"
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    assert [item["solid_id"] for item in manifest["solids"]] == list(catalog)
+    assert len(list((folder / "steps").glob("*.step"))) == 3
     assert source.read_bytes() == b"source"
-    report = json.loads(
-        (tmp_path / "sample.solid_export_diagnostic" / "report.json").read_text()
-    )
-    assert report["failed"] == 1
-    assert len(list((tmp_path / "sample.solid_export_diagnostic" / "steps").glob("*.step"))) == 2
+    resumed = export_all_solids(source, **kw)
+    assert resumed["status"] == "PASS"
+    assert len(attempted) == 3
+    assert all(item.get("resumed") for item in resumed["items"])
 
 
-def test_all_solid_catalog_failure_logged(tmp_path):
+def test_failure_continues_and_resume_only_failed(tmp_path):
+    source = tmp_path / "sample.cst"
+    source.write_bytes(b"source")
+    attempts = []
+    broken = True
+
+    def export(project, items):
+        name, target = items[0]
+        attempts.append(name)
+        if name == "root:broken" and broken:
+            raise RuntimeError("bad solid")
+        target.write_bytes(b"STEP" * 50)
+
+    kw = dict(connect_fn=FakeEnv, catalog_fn=lambda _: {
+        "root:good": "PEC", "root:broken": "PEC", "root:last": "PEC",
+    }, export_fn=export, geometry_fn=lambda _: [object()])
+    first = export_all_solids(source, **kw)
+    assert first["status"] == "PARTIAL"
+    assert (first["success"], first["failed"]) == (2, 1)
+    assert not (tmp_path / "sample.solid_export_diagnostic" / "manifest.json").exists()
+    broken = False
+    second = export_all_solids(source, **kw)
+    assert second["status"] == "PASS"
+    assert attempts == ["root:good", "root:broken", "root:last", "root:broken"]
+
+
+def test_catalog_failure_logged(tmp_path):
     source = tmp_path / "sample.cst"
     source.write_bytes(b"source")
 
-    def broken(project):
+    def broken(_):
         raise RuntimeError("catalog error")
 
     result = export_all_solids(source, connect_fn=FakeEnv, catalog_fn=broken)
     assert result["status"] == "FAIL"
     assert "catalog error" in result["error"]
     assert (tmp_path / "sample.solid_export_diagnostic" / "report.json").exists()
-
-
-def test_multiple_solids_in_leaf_export_once(tmp_path):
-    source = tmp_path / "nested.cst"
-    source.write_bytes(b"source")
-    attempted = []
-
-    def export(project, items):
-        name, target = items[0]
-        attempted.append(name)
-        target.write_bytes(b"STEP" * 50)
-
-    result = export_all_solids(
-        source, connect_fn=FakeEnv,
-        catalog_fn=lambda project: {
-            "root/upper/leaf:a": "PEC",
-            "root/upper/leaf:b": "Vacuum",
-            "root/other:end": "PEC",
-        },
-        export_fn=export,
-    )
-    assert attempted == ["root/upper/leaf:a", "root/other:end"]
-    assert result["solid_total"] == 3
-    assert result["leaf_component_total"] == 2
-    assert result["total"] == result["success"] == 2
-    assert result["items"][0]["solid_ids"] == [
-        "root/upper/leaf:a", "root/upper/leaf:b",
-    ]
-    tree = json.loads((tmp_path / "nested.solid_export_diagnostic" /
-                       "component_tree.json").read_text())
-    assert tree["components"]["root/upper"]["children"] == ["root/upper/leaf"]
