@@ -6,7 +6,7 @@ import json
 import math
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cst_material.occt_geometry import analyze_step, sha256_file
@@ -121,7 +121,7 @@ def build_feature_library(
                     feature["face_count"], feature["edge_count"],
                     feature["vertex_count"], feature["solid_body_count"],
                     json.dumps(feature, ensure_ascii=False), None,
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 )
                 report["success"] += 1
             except Exception as exc:  # noqa: BLE001 - record per-Solid failures
@@ -130,7 +130,7 @@ def build_feature_library(
                     item["step"], expected_hash or "", "FAIL",
                     None, None, None, None, None, None, None, None, None,
                     None, f"{type(exc).__name__}: {exc}",
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 )
                 report["failed"] += 1
                 report["errors"].append({"solid_id": solid_id, "error": values[-2]})
