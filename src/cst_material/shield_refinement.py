@@ -247,14 +247,16 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = "P8-B5-independent-full-geometry-v1-20261118"
+    algorithm_version = ("P8-B5-independent-full-geometry-v1-20261118"
+                         if exhaustive else "P8-B4-material-path-v1-20261118")
     rows = (_all_geometry_candidates(root) if exhaustive
             else search_shield_candidates(root))
     if limit is not None:
         if type(limit) is not int or limit < 1:
             raise ValueError("limit 必须为正整数")
         rows = rows[:limit]
-    cache = root / "shield_refinement.json"
+    cache = root / ("shield_refinement_all.json" if exhaustive
+                    else "shield_refinement.json")
     previous = {}
     if cache.is_file():
         try:
