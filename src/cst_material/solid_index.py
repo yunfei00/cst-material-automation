@@ -17,7 +17,8 @@ def _inside_folder(folder: Path, relative: str) -> Path:
     return candidate
 
 
-def load_manifest(folder: str | Path, *, verify_files: bool = True) -> dict:
+def load_manifest(folder: str | Path, *, verify_files: bool = True,
+                  require_files: bool = True) -> dict:
     root = Path(folder).resolve(strict=True)
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema_version") != 1 or manifest.get("unit") != "mm":
@@ -35,13 +36,15 @@ def load_manifest(folder: str | Path, *, verify_files: bool = True) -> dict:
             raise ValueError("Solid ID 为空、重复或不是完整 Component:Solid")
         names.append(name)
         path = _inside_folder(root, entry.get("step"))
-        if not path.is_file() or path.suffix.casefold() not in {".step", ".stp"}:
+        if path.suffix.casefold() not in {".step", ".stp"} or (
+            require_files and not path.is_file()
+        ):
             raise ValueError(f"STEP 文件不存在：{path}")
         if path in paths:
             raise ValueError("不同 Solid 不可引用同一 STEP 文件")
         paths.append(path)
         expected_hash = entry.get("sha256")
-        if verify_files and expected_hash and expected_hash != sha256_file(path):
+        if verify_files and path.is_file() and expected_hash and expected_hash != sha256_file(path):
             raise ValueError(f"STEP 几何文件已发生变化：{name}")
     return manifest
 
