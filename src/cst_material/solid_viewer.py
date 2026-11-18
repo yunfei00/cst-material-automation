@@ -239,6 +239,21 @@ def launch_viewer(path: str | Path) -> int:
                          "direct_solid_export": True}
                         for item in manifest["solids"]
                     ]}
+                elif (self.root / "geometry_features.sqlite3").is_file():
+                    with sqlite3.connect(self.root / "geometry_features.sqlite3") as db:
+                        rows = db.execute(
+                            "SELECT solid_id,step,material FROM solids WHERE status='PASS'"
+                        ).fetchall()
+                    catalog = {"records": [
+                        {
+                            "solid_id": solid_id, "step": step,
+                            "material": material, "part_type": "UNKNOWN",
+                            "identity_status": "UNREVIEWED",
+                            "candidate": "独立几何特征记录",
+                            "direct_solid_export": True,
+                        }
+                        for solid_id, step, material in rows
+                    ]}
                 elif (self.root / "report.json").is_file():
                     catalog = load_diagnostic_catalog(self.root)
                 else:
