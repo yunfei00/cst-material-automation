@@ -122,7 +122,7 @@ def export_all_solids(
                 if project is not None:
                     try:
                         project.close()
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - CST vendor cleanup
                         report["events"].append({"stage": "CLOSE_ERROR", "error": str(exc)})
                 if env is not None:
                     try:
