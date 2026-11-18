@@ -42,7 +42,7 @@ def test_batch_resume_and_failure(tmp_path, monkeypatch):
     assert len(calls) == 1
     saved = json.loads((tmp_path / "shield_refinement.json").read_text(encoding="utf-8"))
     assert saved["schema_version"] == 2
-    assert saved["algorithm_version"] == "P8-B4-20261118"
+    assert saved["algorithm_version"] == "P8-B4-cross-section-20261118"
     assert saved["results"]["b"]["status"] == "FAIL"
     assert saved["results"]["a"]["verdict"] == "REVIEW"
 
