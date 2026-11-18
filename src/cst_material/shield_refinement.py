@@ -149,7 +149,7 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = "P8-B4-20261118"
+    algorithm_version = "P8-B4-cross-section-20261118"
     rows = search_shield_candidates(root)
     if limit is not None:
         if type(limit) is not int or limit < 1:
