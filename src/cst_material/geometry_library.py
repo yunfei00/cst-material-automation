@@ -6,7 +6,7 @@ import json
 import math
 import sqlite3
 import time
-from datetime import UTC, datetime
+from datetime import datetime, UTC
 from pathlib import Path
 
 from cst_material.occt_geometry import analyze_step, sha256_file
