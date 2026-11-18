@@ -32,6 +32,7 @@ from cst_material.solid_scan import scan_grid
 from cst_material.structure_samples import (
     load_samples,
     save_confirmed_sample,
+    save_confirmed_samples_batch,
     search_similar_samples,
 )
 
@@ -50,6 +51,7 @@ def launch_viewer(path: str | Path) -> int:
         QLabel,
         QLineEdit,
         QMainWindow,
+        QMessageBox,
         QPushButton,
         QSpinBox,
         QSplitter,
@@ -76,6 +78,7 @@ def launch_viewer(path: str | Path) -> int:
             self.search_results = None
             self.tree_items = {}
             self.original_tree_order = []
+            self.similarity_threshold = 0.98
             self.active_record = None
             self.active_solids = None
             self.component_bodies = {}
@@ -100,11 +103,23 @@ def launch_viewer(path: str | Path) -> int:
             for button in (self.find_similar, self.find_springs, self.clear_results):
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
+            threshold_row = QHBoxLayout()
+            threshold_row.addWidget(QLabel("最低相似度"))
+            self.similarity_cutoff = QDoubleSpinBox()
+            self.similarity_cutoff.setRange(0, 1)
+            self.similarity_cutoff.setSingleStep(0.01)
+            self.similarity_cutoff.setDecimals(3)
+            self.similarity_cutoff.setValue(0.98)
+            threshold_row.addWidget(self.similarity_cutoff)
+            left_layout.addLayout(threshold_row)
+            self.batch_save = QPushButton("将勾选结果批量保存为结构样本")
+            left_layout.addWidget(self.batch_save)
             self.search_summary = QLabel("选中 Solid 后可直接搜索，点击结果即可查看三维")
             self.search_summary.setWordWrap(True)
             left_layout.addWidget(self.search_summary)
             self.tree = QTreeWidget()
             self.tree.setHeaderLabels(["Solid ID", "识别结果 / 相似度"])
+            self.tree.setColumnWidth(0, 260)
             left_layout.addWidget(self.tree)
             splitter.addWidget(left)
 
@@ -188,6 +203,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_similar.clicked.connect(self._find_similar_solids)
             self.find_springs.clicked.connect(self._find_spring_candidates)
             self.clear_results.clicked.connect(self._clear_search_results)
+            self.batch_save.clicked.connect(self._save_checked_samples)
             self.tree.currentItemChanged.connect(self._select_solid)
             self.check_button.clicked.connect(self._query_point)
             self.scan_button.clicked.connect(self._scan_solid)
@@ -291,8 +307,15 @@ def launch_viewer(path: str | Path) -> int:
                     self.root, reference_id=reference_id,
                     spring_candidates=spring_candidates, limit=10000,
                 )
+                if reference_id is not None:
+                    cutoff = self.similarity_cutoff.value()
+                    rows = [row for row in rows if row["similarity"] >= cutoff]
                 self.search_results = {row["solid_id"]: row for row in rows}
                 self._sort_tree_by_search_results(rows)
+                for solid_id, item in self.tree_items.items():
+                    item.setCheckState(
+                        0, Qt.CheckState.Unchecked
+                    ) if solid_id in self.search_results else None
                 self.search.setText("")
                 self._filter_tree("")
                 self.search_summary.setText(
@@ -308,6 +331,63 @@ def launch_viewer(path: str | Path) -> int:
                 QApplication.restoreOverrideCursor()
                 self.find_similar.setEnabled(True)
                 self.find_springs.setEnabled(True)
+
+        def _save_checked_samples(self):
+            if not self.root or self.search_results is None:
+                self.search_summary.setText("请先执行相似检索并勾选需要确认的 Solid")
+                return
+            selected = [
+                solid_id for solid_id in self.search_results
+                if solid_id in self.tree_items
+                and self.tree_items[solid_id].checkState(0) == Qt.CheckState.Checked
+            ]
+            if not selected:
+                self.search_summary.setText("请勾选确认属于同一结构类别的 Solid")
+                return
+            part_type = self.confirmed_type.text().strip()
+            if not part_type:
+                self.search_summary.setText("请先在右侧填写真实零件类别")
+                return
+            choice = QMessageBox.question(
+                self, "批量确认结构样本",
+                f"确认已逐一核实 {len(selected)} 个 Solid 属于 {part_type}？"
+                "此操作仅保存结构样本，不会自动赋材料。",
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                import json
+
+                with sqlite3.connect(self.root / "geometry_features.sqlite3") as db:
+                    placeholders = ",".join("?" for _ in selected)
+                    records = db.execute(
+                        "SELECT solid_id,step_sha256,features_json FROM solids "
+                        f"WHERE status='PASS' AND solid_id IN ({placeholders})",
+                        selected,
+                    ).fetchall()
+                if len(records) != len(selected):
+                    raise ValueError("部分已选 Solid 缺少有效几何特征")
+                entries = [
+                    {
+                        "sample_id": f"{digest[:16]}:{solid_id}",
+                        "part_type": part_type,
+                        "source_sha256": digest,
+                        "metrics": json.loads(features),
+                    }
+                    for solid_id, digest, features in records
+                ]
+                result = save_confirmed_samples_batch(
+                    self._sample_library_path(), entries
+                )
+                self.search_summary.setText(
+                    f"已保存 {result['added']} 个确认样本；"
+                    f"样本库共 {result['total']} 个。"
+                )
+                self._refresh_shape_matches()
+            except Exception as exc:  # noqa: BLE001 - show actionable error
+                self.search_summary.setText(
+                    f"批量保存失败：{type(exc).__name__}: {exc}"
+                )
 
         def _clear_search_results(self):
             self.search_results = None
