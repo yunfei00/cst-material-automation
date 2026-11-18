@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 """Optional exact-CAD regression: run with `uv run --extra cad pytest -q tests/test_shield_cad_shapes.py`.
 
 CI without CAD dependencies skips this module; it is not a substitute for
