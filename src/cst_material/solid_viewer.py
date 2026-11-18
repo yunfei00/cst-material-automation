@@ -264,9 +264,12 @@ def launch_viewer(path: str | Path) -> int:
                                 body_rec["record_id"], body_rec["solid_id"],
                             ]))
                     item.setExpanded(True)
+                    expected = len(rec.get("solid_ids", []))
+                    mismatch = ("；数量与 CST Solid 不一致，请检查导出"
+                                if expected != len(bodies) else "")
                     self.answer.setText(
-                        f"组件 STEP 包含 {len(bodies)} 个几何实体。"
-                        "请展开选择单个几何体；当前不能自动对应 CST Solid 名称。"
+                        f"组件 STEP 几何实体 {len(bodies)} 个，CST Solid {expected} 个"
+                        f"{mismatch}。请展开选择单个几何体；尚未建立名称映射。"
                     )
                     return
                 if "body_index" in rec:
