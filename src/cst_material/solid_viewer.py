@@ -71,6 +71,7 @@ def launch_viewer(path: str | Path) -> int:
             self.record_lookup = {}
             self.active_record = None
             self.active_solids = None
+            self.component_bodies = {}
             self.tempdir = tempfile.TemporaryDirectory(prefix="cst_viewer_")
             self.preview_actor = None
             self.active_mesh = None
@@ -181,7 +182,9 @@ def launch_viewer(path: str | Path) -> int:
                            if (self.root / "report.json").is_file()
                            else load_catalog(self.root, verify_files=False))
                 self.records = catalog["records"]
-                self.record_lookup = {rec["solid_id"]: rec for rec in self.records}
+                self.record_lookup = {
+                    rec.get("record_id", rec["solid_id"]): rec for rec in self.records
+                }
                 nodes = {}
                 for rec in self.records:
                     if rec.get("diagnostic_export"):
@@ -199,8 +202,8 @@ def launch_viewer(path: str | Path) -> int:
                                 nodes[key] = node
                             parent = nodes[key]
                         item = QTreeWidgetItem([
-                            rec["solid_id"],
-                            f"组件级 STEP · {len(rec.get('solid_ids', []))} 个 Solid",
+                            rec["record_id"],
+                            f"组件 STEP · CST Solid {len(rec.get('solid_ids', []))} 个",
                         ])
                         parent.addChild(item)
                     else:
@@ -244,18 +247,50 @@ def launch_viewer(path: str | Path) -> int:
             start = time.perf_counter()
             try:
                 file_path = (self.root / rec["step"]).resolve()
-                mesh_path = (None if rec.get("diagnostic_export")
-                             else ensure_preview_mesh(self.root, rec))
-                self._display_step(file_path, rec, mesh_path)
+                if rec.get("diagnostic_export") and "body_index" not in rec:
+                    bodies = read_step(file_path)
+                    self.component_bodies[rec["record_id"]] = bodies
+                    if item.childCount() == 0:
+                        for index in range(len(bodies)):
+                            body_rec = {
+                                **rec,
+                                "record_id": f"{rec['record_id']}:body:{index}",
+                                "body_index": index,
+                                "solid_id": f"未映射几何体 {index + 1}",
+                                "candidate": "未建立 CST Solid 名称映射；禁止赋材料",
+                            }
+                            self.record_lookup[body_rec["record_id"]] = body_rec
+                            item.addChild(QTreeWidgetItem([
+                                body_rec["record_id"], body_rec["solid_id"],
+                            ]))
+                    item.setExpanded(True)
+                    self.answer.setText(
+                        f"组件 STEP 包含 {len(bodies)} 个几何实体。"
+                        "请展开选择单个几何体；当前不能自动对应 CST Solid 名称。"
+                    )
+                    return
+                if "body_index" in rec:
+                    bodies = self.component_bodies.get(
+                        rec["record_id"].split(":body:")[0]
+                    )
+                    if bodies is None:
+                        bodies = read_step(file_path)
+                    self._display_step(
+                        file_path, rec, solids=[bodies[rec["body_index"]]]
+                    )
+                else:
+                    mesh_path = ensure_preview_mesh(self.root, rec)
+                    self._display_step(file_path, rec, mesh_path)
                 self.statusBar().showMessage(
                     f"显示 {rec['solid_id']}：{time.perf_counter() - start:.3f}s"
                 )
             except Exception as exc:  # noqa: BLE001 - GUI must show unexpected geometry errors
                 self.answer.setText(f"读取失败：{type(exc).__name__}: {exc}")
 
-        def _display_step(self, file_path, rec, mesh_path=None):
+        def _display_step(self, file_path, rec, mesh_path=None, solids=None):
             start = time.perf_counter()
-            solids = read_step(file_path)
+            if solids is None:
+                solids = read_step(file_path)
             if mesh_path is None:
                 mesh_path = Path(self.tempdir.name) / "single.stl"
                 mesh_path.unlink(missing_ok=True)
@@ -450,6 +485,9 @@ def launch_viewer(path: str | Path) -> int:
         def _confirm_identity(self):
             if not self.root or self.active_record is None:
                 self.answer.setText("请先选择来自几何索引的 Solid")
+                return
+            if self.active_record.get("diagnostic_export"):
+                self.answer.setText("组件 STEP 的几何体尚未映射到 CST Solid，禁止确认材料。")
                 return
             try:
                 target = store_confirmation(
