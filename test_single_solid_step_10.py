@@ -69,7 +69,17 @@ def export_ten_solids(source_file: str | Path, output_dir: str | Path,
                 env = (connect_fn or connect)()
                 project = env.open_project(str(staged))
                 catalog = (catalog_fn or read_shape_catalog)(project)
-                selected = list(catalog.items())[:limit]
+                from collections import Counter
+                component_counts = Counter(
+                    sid.rpartition(":")[0] for sid in catalog
+                )
+                # Prefer Solids sharing a component: detects accidental whole-component export.
+                selected = sorted(
+                    catalog.items(),
+                    key=lambda pair: (-component_counts[pair[0].rpartition(":")[0]],
+                                      pair[0]),
+                )[:limit]
+                report["selection_rule"] = "prefer_multi_solid_components"
                 report["selected"] = len(selected)
                 save()
                 for index, (solid_id, material) in enumerate(selected, 1):
