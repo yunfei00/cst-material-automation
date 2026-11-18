@@ -106,7 +106,8 @@ def _verify_wall_segments(solids: list, faces: list[dict], thickness: dict) -> d
     }
 
 
-def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, float, float]) -> dict:
+def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, float, float],
+                          wall_thickness_mm: float | None = None) -> dict:
     """Check cavity centre and four lateral positions at several axial depths.
 
     A single centre-line void is insufficient: a flat plate, U-channel, and
@@ -125,8 +126,15 @@ def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, fl
     lengths = [bbox[i + 3] - bbox[i] for i in range(3)]
     if min(lengths) <= 0:
         return {"supported": False, "reason": "退化包围盒"}
-    # Sampling at the central depth and two nearby sections avoids making a
-    # verdict from a single lucky point. 0.08/0.92 probe possible sidewalls.
+    # Fixed 8% probes miss 0.3 mm walls on a 20 mm shielding can.
+    offsets = []
+    for lateral_axis in lateral:
+        extent = lengths[lateral_axis]
+        if wall_thickness_mm and math.isfinite(wall_thickness_mm) and wall_thickness_mm > 0:
+            offset = min(0.08, max(0.001, 0.5 * wall_thickness_mm / extent))
+        else:
+            offset = 0.08
+        offsets.append(offset)
     profiles = []
     for axial_fraction in (0.25, 0.5, 0.75):
         def sample(u, v, axial_fraction=axial_fraction):
@@ -137,8 +145,9 @@ def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, fl
             return classify_point(solids, tuple(point), tolerance=1e-6)
 
         center = sample(0.5, 0.5)
-        sides = [sample(0.08, 0.5), sample(0.92, 0.5),
-                 sample(0.5, 0.08), sample(0.5, 0.92)]
+        u, v = offsets
+        sides = [sample(u, 0.5), sample(1 - u, 0.5),
+                 sample(0.5, v), sample(0.5, 1 - v)]
         profiles.append({"axial_fraction": axial_fraction, "center": center,
                          "side_states": sides,
                          "side_material_count": sides.count("INSIDE")})
@@ -177,7 +186,10 @@ def refine_step(path: str | Path) -> dict:
 
     cap_faces = sorted(faces, key=lambda face: face["area"], reverse=True)
     bbox = bbox or (geometry_metrics(solids)["bbox_mm"] if cap_faces else None)
-    enclosure = _cavity_cross_section(solids, bbox, cap_faces[0]["normal"]) if cap_faces else {
+    enclosure = _cavity_cross_section(
+        solids, bbox, cap_faces[0]["normal"],
+        thickness.get("dominant_thickness_mm")
+    ) if cap_faces else {
         "supported": False, "reason": "缺少平面主面"
     }
     walls = shape.get("metrics", {}).get("transverse_face_count", 0)
@@ -247,8 +259,8 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = ("P8-B5-independent-full-geometry-v1-20261118"
-                         if exhaustive else "P8-B4-material-path-v1-20261118")
+    algorithm_version = ("P8-B5-adaptive-wall-full-v2-20261118"
+                         if exhaustive else "P8-B5-adaptive-wall-shortlist-v2-20261118")
     rows = (_all_geometry_candidates(root) if exhaustive
             else search_shield_candidates(root))
     if limit is not None:
