@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sqlite3
 from pathlib import Path
 
 from cst_material.occt_geometry import sha256_file
@@ -207,15 +208,48 @@ def refine_step(path: str | Path) -> dict:
     }
 
 
+def _all_geometry_candidates(root: Path) -> list[dict]:
+    """Recall-first geometry search: do not gate on P5 shield heuristic.
+
+    Every successfully extracted positive-volume Solid with a STEP path is
+    eligible for exact BREP analysis. No PCB, labels, BOM or sample is used.
+    """
+    db = root / "geometry_features.sqlite3"
+    if not db.is_file():
+        raise FileNotFoundError("缺少 P5 几何索引，请先导出结构并提取特征")
+    connection = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+    try:
+        rows = connection.execute(
+            "SELECT solid_id,step,features_json FROM solids WHERE status='PASS'"
+        ).fetchall()
+    finally:
+        connection.close()
+    result = []
+    for sid, step, raw in rows:
+        try:
+            features = json.loads(raw)
+            volume = float(features["volume_mm3"])
+            if not math.isfinite(volume) or volume <= 0:
+                continue
+        except (KeyError, ValueError, TypeError):
+            continue
+        result.append({"solid_id": sid, "step": step, "score": 0,
+                       "volume_mm3": volume})
+    # Larger bodies first for a predictable, resumable full scan.
+    result.sort(key=lambda row: (-row["volume_mm3"], row["solid_id"]))
+    return result
+
+
 def refine_candidates(folder: str | Path, *, limit: int | None = None,
-                      progress=None) -> dict:
+                      progress=None, exhaustive: bool = False) -> dict:
     root = Path(folder).resolve(strict=True)
     manifest = root / "manifest.json"
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = "P8-B4-material-path-v1-20261118"
-    rows = search_shield_candidates(root)
+    algorithm_version = "P8-B5-independent-full-geometry-v1-20261118"
+    rows = (_all_geometry_candidates(root) if exhaustive
+            else search_shield_candidates(root))
     if limit is not None:
         if type(limit) is not int or limit < 1:
             raise ValueError("limit 必须为正整数")
@@ -270,8 +304,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="P8-B3 屏蔽罩两级筛选")
     parser.add_argument("folder")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--exhaustive", action="store_true",
+                        help="不依赖一级屏蔽罩筛选，逐一检查全部有效 Solid")
     args = parser.parse_args(argv)
     result = refine_candidates(args.folder, limit=args.limit,
+                               exhaustive=args.exhaustive,
                                progress=lambda i, n, s: print(f"{i}/{n} {s}", flush=True)
                                if i % 20 == 0 or i == n else None)
     print(json.dumps(result, ensure_ascii=False, indent=2))
