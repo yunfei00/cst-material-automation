@@ -43,3 +43,19 @@ def test_batch_resume_and_failure(tmp_path, monkeypatch):
     saved = json.loads((tmp_path / "shield_refinement.json").read_text(encoding="utf-8"))
     assert saved["results"]["b"]["status"] == "FAIL"
     assert saved["results"]["a"]["verdict"] == "REVIEW"
+
+
+def test_same_facing_planes_not_thickness():
+    faces = [
+        {'normal': (0, 0, 1), 'center': (0, 0, 1), 'area': 100},
+        {'normal': (0, 0, 1), 'center': (0, 0, 0.8), 'area': 100},
+    ]
+    assert not shield_refinement.planar_thickness_evidence(faces)['supported']
+
+
+def test_corrupt_checkpoint_is_recovered(tmp_path, monkeypatch):
+    (tmp_path / 'manifest.json').write_text('{}', encoding='utf-8')
+    (tmp_path / 'shield_refinement.json').write_text('{broken', encoding='utf-8')
+    monkeypatch.setattr(shield_refinement, 'search_shield_candidates', lambda _: [])
+    result = shield_refinement.refine_candidates(tmp_path)
+    assert result['summary']['total'] == 0
