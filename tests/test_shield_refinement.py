@@ -42,7 +42,7 @@ def test_batch_resume_and_failure(tmp_path, monkeypatch):
     assert len(calls) == 1
     saved = json.loads((tmp_path / "shield_refinement.json").read_text(encoding="utf-8"))
     assert saved["schema_version"] == 2
-    assert saved["algorithm_version"] == "P8-B4-material-path-v1-20261118"
+    assert saved["algorithm_version"] == "P8-B5-adaptive-wall-shortlist-v2-20261118"
     assert saved["results"]["b"]["status"] == "FAIL"
     assert saved["results"]["a"]["verdict"] == "REVIEW"
 
@@ -155,3 +155,21 @@ def test_wall_path_accepts_material_gap(monkeypatch):
     result = shield_refinement._verify_wall_segments([object()], faces, thickness)
     assert result["material_path_count"] == 1
     assert result["material_path_ratio"] == 1
+
+
+def test_adaptive_probe_finds_submillimeter_sidewalls(monkeypatch):
+    from cst_material import occt_geometry
+
+    def classify(solids, point, tolerance):
+        x, y, _ = point
+        return "INSIDE" if x < 0.3 or x > 19.7 or y < 0.3 or y > 15.7 else "OUTSIDE"
+
+    monkeypatch.setattr(occt_geometry, "classify_point", classify)
+    fixed = shield_refinement._cavity_cross_section(
+        [object()], [0, 0, 0, 20, 16, 5], (0, 0, 1)
+    )
+    adaptive = shield_refinement._cavity_cross_section(
+        [object()], [0, 0, 0, 20, 16, 5], (0, 0, 1), 0.3
+    )
+    assert not fixed["wall_enclosure_hint"]
+    assert adaptive["wall_enclosure_hint"]
