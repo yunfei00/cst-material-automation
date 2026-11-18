@@ -7,6 +7,7 @@ Dependencies are imported at launch so batch Python remains headless.
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -338,7 +339,23 @@ def launch_viewer(path: str | Path) -> int:
                 ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2),
             ):
                 widget.setValue(center)
+            library_info = ""
+            if self.root and (self.root / "geometry_features.sqlite3").is_file():
+                try:
+                    with sqlite3.connect(self.root / "geometry_features.sqlite3") as db:
+                        row = db.execute(
+                            "SELECT status,volume_mm3,face_count,body_count "
+                            "FROM solids WHERE solid_id=?", (rec["solid_id"],)
+                        ).fetchone()
+                    if row:
+                        library_info = (
+                            f"几何特征库: {row[0]} | "
+                            f"体积={row[1]} mm³ | 面数={row[2]} | 实体数={row[3]}\\n"
+                        )
+                except sqlite3.Error:
+                    library_info = "几何特征库: 数据库读取失败\\n"
             self.info.setText(
+                library_info +
                 f"Solid ID: {rec['solid_id']}\n"
                 f"识别身份: {rec.get('part_type', 'UNKNOWN')} "
                 f"[{rec.get('identity_status', 'UNREVIEWED')}]\n"
