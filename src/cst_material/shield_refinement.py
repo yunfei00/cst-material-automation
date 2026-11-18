@@ -289,14 +289,16 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
             record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
             summary["failed"] += 1
         results[sid] = record
-        # Atomic checkpoint: interrupted runs resume from the last completed item.
-        temporary = cache.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps({
+        # Batch checkpoint for thousands of solids; avoid O(N²) JSON rewrites.
+        # A crash may redo at most 19 records, never lose completed batches.
+        if index % 20 == 0 or index == len(rows):
+            temporary = cache.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps({
             "schema_version": 2, "algorithm_version": algorithm_version,
             "manifest_sha256": manifest_hash,
             "summary": summary, "results": {**previous, **results},
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(cache)
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(cache)
         if progress:
             progress(index, len(rows), summary)
     return {"summary": summary, "output": str(cache)}
