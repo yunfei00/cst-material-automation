@@ -1,4 +1,4 @@
-"""Fast CST 2025 SP1 experiment: export at most 10 actual Solids by slash path.
+"""Fast CST 2025 SP1 experiment: export at most 10 actual Solids by CST Solid ID.
 
 Do not claim a mapping unless a STEP contains exactly one geometric Solid.
 The original CST project is never opened: only a temporary copy is used.
@@ -23,8 +23,8 @@ def build_single_solid_vba(solid_id: str, target: str | Path) -> str:
     component, sep, solid = solid_id.rpartition(":")
     if not sep or not component or not solid:
         raise ValueError(f"无效 CST Solid ID: {solid_id!r}")
-    # This slash syntax is experimental; CST 2025 SP1 must confirm it.
-    object_path = component.rstrip("/") + "/" + solid
+    # CST STEP.Write accepts the original Component:Solid identity.
+    object_path = solid_id
     return "\n".join([
         "With STEP",
         "    .Reset",
@@ -50,7 +50,7 @@ def export_ten_solids(source_file: str | Path, output_dir: str | Path,
     steps = root / "steps"
     steps.mkdir()
     report = {
-        "schema_version": 1, "mode": "EXPERIMENTAL_SLASH_SOLID_PATH",
+        "schema_version": 1, "mode": "EXPERIMENTAL_COLON_SOLID_ID",
         "source": str(source), "limit": limit, "items": [], "status": "FAIL",
         "success": 0, "failed": 0,
     }
