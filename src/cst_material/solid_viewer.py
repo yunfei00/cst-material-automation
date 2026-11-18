@@ -25,6 +25,7 @@ from cst_material.occt_geometry import (
     read_step,
 )
 from cst_material.solid_index import ensure_preview_mesh, load_catalog
+from cst_material.solid_name_mapping import load_verified_mapping
 from cst_material.solid_scan import scan_grid
 from cst_material.structure_samples import (
     load_samples,
@@ -178,9 +179,19 @@ def launch_viewer(path: str | Path) -> int:
             self.save_shape_sample.clicked.connect(self._save_shape_sample)
 
             if self.root:
-                catalog = (load_diagnostic_catalog(self.root)
-                           if (self.root / "report.json").is_file()
-                           else load_catalog(self.root, verify_files=False))
+                if (self.root / "verified_solid_mapping.json").is_file():
+                    verified = load_verified_mapping(self.root)
+                    catalog = {"records": [
+                        {"solid_id": sid, "step": item["step"],
+                         "part_type": "UNKNOWN", "identity_status": "UNREVIEWED",
+                         "candidate": "CST 隔离导出验证", "material": None,
+                         "verified_solid_mapping": True}
+                        for sid, item in verified.items()
+                    ]}
+                elif (self.root / "report.json").is_file():
+                    catalog = load_diagnostic_catalog(self.root)
+                else:
+                    catalog = load_catalog(self.root, verify_files=False)
                 self.records = catalog["records"]
                 self.record_lookup = {
                     rec.get("record_id", rec["solid_id"]): rec for rec in self.records
@@ -287,7 +298,8 @@ def launch_viewer(path: str | Path) -> int:
                         file_path, rec, solids=[bodies[rec["body_index"]]]
                     )
                 else:
-                    mesh_path = ensure_preview_mesh(self.root, rec)
+                    mesh_path = (None if rec.get("verified_solid_mapping")
+                                 else ensure_preview_mesh(self.root, rec))
                     self._display_step(file_path, rec, mesh_path)
                 self.statusBar().showMessage(
                     f"显示 {rec['solid_id']}：{time.perf_counter() - start:.3f}s"
