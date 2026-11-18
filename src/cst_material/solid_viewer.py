@@ -26,6 +26,7 @@ from cst_material.occt_geometry import (
     geometry_metrics,
     read_step,
 )
+from cst_material.shield_brep import analyze_shield_step
 from cst_material.shield_recognition import search_shield_candidates
 from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_manifest
 from cst_material.solid_name_mapping import load_verified_mapping
@@ -104,10 +105,12 @@ def launch_viewer(path: str | Path) -> int:
             self.find_similar = QPushButton("以当前 Solid 搜索相似")
             self.find_springs = QPushButton("筛选弹片候选")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
+            self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.clear_results = QPushButton("显示全部")
             for button in (self.find_similar, self.find_springs, self.find_shields, self.clear_results):
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
+            left_layout.addWidget(self.inspect_shield)
             threshold_row = QHBoxLayout()
             threshold_row.addWidget(QLabel("最低相似度"))
             self.similarity_cutoff = QDoubleSpinBox()
@@ -210,6 +213,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_similar.clicked.connect(self._find_similar_solids)
             self.find_springs.clicked.connect(self._find_spring_candidates)
             self.find_shields.clicked.connect(self._find_shield_candidates)
+            self.inspect_shield.clicked.connect(self._inspect_shield)
             self.clear_results.clicked.connect(self._clear_search_results)
             self.batch_save.clicked.connect(self._save_checked_samples)
             self.tree.currentItemChanged.connect(self._select_solid)
@@ -315,6 +319,39 @@ def launch_viewer(path: str | Path) -> int:
                 self.search_summary.setText("请先在左侧选中一个 Solid")
                 return
             self._apply_geometry_search(reference_id=self.active_record["solid_id"])
+
+        def _inspect_shield(self):
+            if not self.root or self.active_record is None:
+                self.search_summary.setText("请先选择一个完整 Solid")
+                return
+            rec = self.active_record
+            try:
+                step = (self.root / rec["step"]).resolve()
+                if not step.is_relative_to(self.root.resolve()):
+                    raise ValueError("STEP 路径不能超出导出目录")
+                if not step.is_file():
+                    raise FileNotFoundError("精细几何检查需要该 Solid 的 STEP 文件")
+                self.inspect_shield.setEnabled(False)
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                result = analyze_shield_step(step)
+                evidence = "\\n".join(result["evidence"])
+                self.similar_results.setText(
+                    f"屏蔽罩 B-rep 检查：{result['score']}/100\\n"
+                    f"几何候选：{'是' if result['candidate'] else '未达到阈值'}\\n"
+                    f"{evidence}\\n"
+                    "该结果不是功能身份确认，不会自动赋材料。"
+                )
+                self.search_summary.setText(
+                    f"已检查 {rec['solid_id']} 的精确 STEP 几何；"
+                    "结果见右侧结构相似样本区域。"
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.search_summary.setText(
+                    f"屏蔽罩精细检查失败：{type(exc).__name__}: {exc}"
+                )
+            finally:
+                QApplication.restoreOverrideCursor()
+                self.inspect_shield.setEnabled(True)
 
         def _find_shield_candidates(self):
             if not self.root:
