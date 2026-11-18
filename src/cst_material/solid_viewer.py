@@ -104,9 +104,10 @@ def launch_viewer(path: str | Path) -> int:
             left_layout.addWidget(self.search)
             search_actions = QHBoxLayout()
             self.find_similar = QPushButton("以当前 Solid 搜索相似")
-            self.find_springs = QPushButton("筛选弹片候选")
+            self.spring_only = QCheckBox("弹片")
             self.find_pcb = QPushButton("定位主 PCB（最大体积）")
-            self.pcb_only = QCheckBox("只显示主 PCB")
+            self.pcb_only = QCheckBox("主PCB")
+            self.shield_only = QCheckBox("屏蔽罩")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -115,14 +116,13 @@ def launch_viewer(path: str | Path) -> int:
             self.refinement_results = {}
             self.pcb_candidate_cache = None
             self.clear_results = QPushButton("显示全部")
-            for button in (self.find_similar, self.find_springs, self.find_shields, self.clear_results):
+            for button in (self.find_similar, self.clear_results):
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
-            left_layout.addWidget(self.find_pcb)
-            left_layout.addWidget(self.pcb_only)
-            left_layout.addWidget(self.inspect_shield)
-            left_layout.addWidget(self.refine_shields)
-            left_layout.addWidget(self.scan_all_shields)
+            filters = QHBoxLayout()
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
+                filters.addWidget(checkbox)
+            left_layout.addLayout(filters)
             threshold_row = QHBoxLayout()
             threshold_row.addWidget(QLabel("最低相似度"))
             self.similarity_cutoff = QDoubleSpinBox()
@@ -223,13 +223,13 @@ def launch_viewer(path: str | Path) -> int:
 
             self.search.textChanged.connect(self._filter_tree)
             self.find_similar.clicked.connect(self._find_similar_solids)
-            self.find_springs.clicked.connect(self._find_spring_candidates)
-            self.find_pcb.clicked.connect(self._find_main_pcb)
+            self.spring_only.toggled.connect(self._toggle_spring_only)
+
             self.pcb_only.toggled.connect(self._toggle_pcb_only)
-            self.find_shields.clicked.connect(self._find_shield_candidates)
-            self.refine_shields.clicked.connect(self._refine_shield_candidates)
-            self.scan_all_shields.clicked.connect(self._scan_all_shield_geometry)
-            self.inspect_shield.clicked.connect(self._inspect_shield)
+            self.shield_only.toggled.connect(self._toggle_shield_only)
+
+
+
             self.clear_results.clicked.connect(self._clear_search_results)
             self.batch_save.clicked.connect(self._save_checked_samples)
             self.tree.currentItemChanged.connect(self._select_solid)
@@ -369,8 +369,31 @@ def launch_viewer(path: str | Path) -> int:
                 QApplication.restoreOverrideCursor()
                 self.inspect_shield.setEnabled(True)
 
+        def _exclusive_filter(self, active):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
+                if checkbox is active:
+                    continue
+                checkbox.blockSignals(True)
+                checkbox.setChecked(False)
+                checkbox.blockSignals(False)
+
+        def _toggle_shield_only(self, checked):
+            if checked:
+                self._exclusive_filter(self.shield_only)
+                self._scan_all_shield_geometry()
+            else:
+                self._clear_search_results()
+
+        def _toggle_spring_only(self, checked):
+            if checked:
+                self._exclusive_filter(self.spring_only)
+                self._find_spring_candidates()
+            else:
+                self._clear_search_results()
+
         def _toggle_pcb_only(self, checked):
             if checked:
+                self._exclusive_filter(self.pcb_only)
                 self._find_main_pcb()
             else:
                 self._clear_search_results()
@@ -433,7 +456,6 @@ def launch_viewer(path: str | Path) -> int:
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 rows = search_shield_candidates(self.root)
                 self.search_results = {row["solid_id"]: row for row in rows}
-                self._sort_tree_by_search_results(rows)
                 for solid_id, item in self.tree_items.items():
                     if solid_id in self.search_results:
                         item.setCheckState(0, Qt.CheckState.Unchecked)
@@ -464,9 +486,8 @@ def launch_viewer(path: str | Path) -> int:
             import sys
             process = QProcess(self)
             self.refine_process = process
-            self.refine_shields.setEnabled(False)
-            self.scan_all_shields.setEnabled(False)
-            self.search_summary.setText('全量几何识别正在后台运行' if exhaustive
+            self.shield_only.setEnabled(False)
+            self.search_summary.setText('屏蔽罩识别正在后台运行' if exhaustive
                                         else '二级精筛正在后台运行，请等待结果')
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
@@ -479,8 +500,7 @@ def launch_viewer(path: str | Path) -> int:
             def finished(code, _status):
                 import json
                 self.refine_process = None
-                self.refine_shields.setEnabled(True)
-                self.scan_all_shields.setEnabled(True)
+                self.shield_only.setEnabled(True)
                 try:
                     filename = 'shield_refinement_all.json' if exhaustive else 'shield_refinement.json'
                     report = json.loads((self.root / filename).read_text(encoding='utf-8'))
@@ -503,12 +523,11 @@ def launch_viewer(path: str | Path) -> int:
                     )]
                     visible_rows = [row for row in rows if row not in excluded]
                     self.search_results = {row['solid_id']: row for row in visible_rows}
-                    self._sort_tree_by_search_results(visible_rows)
                     self._filter_tree(self.search.text())
                     self.search_summary.setText(
-                        f'二级精筛：保留 {len(visible_rows)}，排除证据不足 {len(excluded)}；'
+                        f'屏蔽罩：显示 {len(visible_rows)}，排除 {len(excluded)}；'
                         f'失败 {report["summary"].get("failed", 0)}。'
-                        '排除仅影响当前视图，重新点击一级筛选可恢复；不自动赋材。'
+                        '几何识别结果仍需核对，不自动赋材。'
                     )
                 except (OSError, ValueError, KeyError) as exc:
                     self.search_summary.setText(f'读取精筛结果失败：{exc}')
@@ -524,8 +543,7 @@ def launch_viewer(path: str | Path) -> int:
             process.start()
             if not process.waitForStarted(3000):
                 self.refine_process = None
-                self.refine_shields.setEnabled(True)
-                self.scan_all_shields.setEnabled(True)
+                self.shield_only.setEnabled(True)
                 self.search_summary.setText(f'无法启动精筛进程：{process.errorString()}')
 
         def _find_spring_candidates(self):
@@ -537,7 +555,7 @@ def launch_viewer(path: str | Path) -> int:
                 return
             try:
                 self.find_similar.setEnabled(False)
-                self.find_springs.setEnabled(False)
+                self.spring_only.setEnabled(False)
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 rows = search_geometry(
                     self.root, reference_id=reference_id,
@@ -566,7 +584,7 @@ def launch_viewer(path: str | Path) -> int:
             finally:
                 QApplication.restoreOverrideCursor()
                 self.find_similar.setEnabled(True)
-                self.find_springs.setEnabled(True)
+                self.spring_only.setEnabled(True)
 
         def _save_checked_samples(self):
             if not self.root or self.search_results is None:
@@ -626,9 +644,10 @@ def launch_viewer(path: str | Path) -> int:
                 )
 
         def _clear_search_results(self):
-            self.pcb_only.blockSignals(True)
-            self.pcb_only.setChecked(False)
-            self.pcb_only.blockSignals(False)
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
+                checkbox.blockSignals(True)
+                checkbox.setChecked(False)
+                checkbox.blockSignals(False)
             self.search_results = None
             self.search.blockSignals(True)
             self.search.clear()
@@ -696,7 +715,7 @@ def launch_viewer(path: str | Path) -> int:
                         refined = self.refinement_results.get(rec["solid_id"])
                         if refined and refined.get("status") == "PASS" and row.get("candidate_type") == "SHIELD_CANDIDATE":
                             labels = {'REVIEW_STRONG': '较强候选', 'REVIEW': '待确认', 'LOW_EVIDENCE': '证据不足'}
-                            item.setText(1, '屏蔽罩二级 · ' + labels.get(refined.get('verdict'), '未知'))
+                            item.setText(1, '屏蔽罩 · ' + labels.get(refined.get('verdict'), '未知'))
                             item.setHidden(not visible)
                             return visible
                         similarity = row.get("similarity")
