@@ -53,6 +53,53 @@ def planar_thickness_evidence(faces: list[dict]) -> dict:
     }
 
 
+def _cavity_cross_section(solids: list, bbox: list[float], axis: tuple[float, float, float]) -> dict:
+    """Check cavity centre and four lateral positions at several axial depths.
+
+    A single centre-line void is insufficient: a flat plate, U-channel, and
+    disconnected walls can all produce one. This is still only a probe.
+    """
+    from cst_material.occt_geometry import classify_point
+
+    if len(bbox) != 6 or not all(math.isfinite(v) for v in bbox):
+        return {"supported": False, "reason": "缺少有效包围盒"}
+    principal = max(range(3), key=lambda i: abs(axis[i]))
+    if abs(axis[principal]) < 0.94:
+        return {"supported": False, "reason": "非轴对齐结构，暂不推断围合"}
+    lateral = [i for i in range(3) if i != principal]
+    lengths = [bbox[i + 3] - bbox[i] for i in range(3)]
+    if min(lengths) <= 0:
+        return {"supported": False, "reason": "退化包围盒"}
+    # Sampling at the central depth and two nearby sections avoids making a
+    # verdict from a single lucky point. 0.08/0.92 probe possible sidewalls.
+    profiles = []
+    for axial_fraction in (0.25, 0.5, 0.75):
+        def sample(u, v):
+            point = [(bbox[i] + bbox[i + 3]) * 0.5 for i in range(3)]
+            point[principal] = bbox[principal] + axial_fraction * lengths[principal]
+            point[lateral[0]] = bbox[lateral[0]] + u * lengths[lateral[0]]
+            point[lateral[1]] = bbox[lateral[1]] + v * lengths[lateral[1]]
+            return classify_point(solids, tuple(point), tolerance=1e-6)
+
+        center = sample(0.5, 0.5)
+        sides = [sample(0.08, 0.5), sample(0.92, 0.5),
+                 sample(0.5, 0.08), sample(0.5, 0.92)]
+        profiles.append({"axial_fraction": axial_fraction, "center": center,
+                         "side_states": sides,
+                         "side_material_count": sides.count("INSIDE")})
+    enclosed_sections = sum(
+        p["center"] == "OUTSIDE" and p["side_material_count"] >= 3
+        for p in profiles
+    )
+    return {
+        "supported": True,
+        "profiles": profiles,
+        "enclosed_section_count": enclosed_sections,
+        "wall_enclosure_hint": enclosed_sections >= 2,
+        "warning": "仅离散横截面采样，不证明连续壁或真实开口",
+    }
+
+
 def refine_step(path: str | Path) -> dict:
     from cst_material.occt_geometry import read_step
     solids = read_step(path)
@@ -61,6 +108,15 @@ def refine_step(path: str | Path) -> dict:
     shape = analyze_shield_solids(solids)
     # The old B-rep score is supporting evidence only, not a positive verdict.
     cavity = shape.get("metrics", {}).get("axial_cavity_probe", {})
+    bbox = shape.get("metrics", {}).get("bbox_mm")
+    # Exact bbox is obtained from the already loaded solids, never the mesh.
+    from cst_material.occt_geometry import geometry_metrics
+
+    bbox = bbox or geometry_metrics(solids)["bbox_mm"]
+    cap_faces = sorted(faces, key=lambda face: face["area"], reverse=True)
+    enclosure = _cavity_cross_section(solids, bbox, cap_faces[0]["normal"]) if cap_faces else {
+        "supported": False, "reason": "缺少平面主面"
+    }
     walls = shape.get("metrics", {}).get("transverse_face_count", 0)
     strong = (
         thickness["supported"]
@@ -68,15 +124,19 @@ def refine_step(path: str | Path) -> dict:
         and walls >= 4
         and cavity.get("axial_void") is True
         and cavity.get("open_end_hint") is True
+        and enclosure.get("wall_enclosure_hint") is True
     )
     if strong:
         verdict = "REVIEW_STRONG"
-    elif walls < 2 or (thickness["supported"] and thickness["pair_consistency"] < 0.35):
+    elif (walls < 2 or (enclosure.get("supported") and
+                        enclosure.get("enclosed_section_count") == 0)
+          or (thickness["supported"] and thickness["pair_consistency"] < 0.35)):
         verdict = "LOW_EVIDENCE"
     else:
         verdict = "REVIEW"
     return {
         "verdict": verdict, "thickness": thickness,
+        "cross_section": enclosure,
         "brep": shape,
         "warning": "几何证据不能证明屏蔽功能；未进行完整等厚及开口连通性验证",
     }
