@@ -25,5 +25,5 @@ uv run --extra viewer python -m cst_material.shield_refinement "$dir"
 - 使用 STEP 面方向修正平面法向；对候选厚度间隙进行 BREP 内部点检测，区分穿过实体材料与穿过空腔的假厚度。
 - 在三个轴向截面检查中心空腔和侧壁围合。无法判断的斜放零件保持待确认，不直接排除。
 - 这些是局部几何线索，不是全局壁厚、曲面折弯或 EMI 功能证明；所有结果仍需工程师复核，禁止自动赋材。
-- 无客户数据时可运行合成 STEP 回归：`uv run --extra cad pytest -q tests/test_shield_cad_shapes.py`；不安装 CAD 依赖时测试跳过，CI 绿不代表真实几何测试已运行。
+- 无客户数据时可运行合成 STEP 回归：`uv run --extra cad pytest -q tests/test_shield_cad_shapes.py`；缺少 CAD 依赖时测试跳过；当前 Windows CI 使用 `--extra viewer` 安装 OCP，实际执行这些合成 STEP 测试，但仍不代表客户真实模型验收。
 - 实际验收请记录典型屏蔽罩、连接块、薄板、折弯件的漏检与误检。P5 一级筛选仍可能漏掉低分真阳性，需要依据真实样本调整召回率。
