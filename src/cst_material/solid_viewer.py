@@ -20,6 +20,7 @@ from cst_material.cad_rendering import (
 from cst_material.diagnostic_catalog import load_diagnostic_catalog
 from cst_material.geometry_search import search_geometry
 from cst_material.knowledge_store import store_confirmation
+from cst_material.pcb_recognition import find_main_pcb
 from cst_material.occt_geometry import (
     classify_point,
     export_preview_stl,
@@ -104,6 +105,7 @@ def launch_viewer(path: str | Path) -> int:
             search_actions = QHBoxLayout()
             self.find_similar = QPushButton("以当前 Solid 搜索相似")
             self.find_springs = QPushButton("筛选弹片候选")
+            self.find_pcb = QPushButton("定位主 PCB（最大体积）")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -113,6 +115,7 @@ def launch_viewer(path: str | Path) -> int:
             for button in (self.find_similar, self.find_springs, self.find_shields, self.clear_results):
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
+            left_layout.addWidget(self.find_pcb)
             left_layout.addWidget(self.inspect_shield)
             left_layout.addWidget(self.refine_shields)
             threshold_row = QHBoxLayout()
@@ -216,6 +219,7 @@ def launch_viewer(path: str | Path) -> int:
             self.search.textChanged.connect(self._filter_tree)
             self.find_similar.clicked.connect(self._find_similar_solids)
             self.find_springs.clicked.connect(self._find_spring_candidates)
+            self.find_pcb.clicked.connect(self._find_main_pcb)
             self.find_shields.clicked.connect(self._find_shield_candidates)
             self.refine_shields.clicked.connect(self._refine_shield_candidates)
             self.inspect_shield.clicked.connect(self._inspect_shield)
@@ -357,6 +361,39 @@ def launch_viewer(path: str | Path) -> int:
             finally:
                 QApplication.restoreOverrideCursor()
                 self.inspect_shield.setEnabled(True)
+
+        def _find_main_pcb(self):
+            if not self.root:
+                self.search_summary.setText("请先打开 P5 几何特征目录")
+                return
+            try:
+                result = find_main_pcb(self.root)
+                candidate = result["candidate"]
+                if candidate is None:
+                    self.search_summary.setText("未找到体积大于 1500 mm³ 的有效 Solid")
+                    return
+                sid = candidate["solid_id"]
+                # Do not hide all other solids: select the PCB anchor and show
+                # the full model context for subsequent layer/region analysis.
+                self.search_results = None
+                self.search.setText("")
+                self._restore_original_tree_order()
+                self._filter_tree("")
+                item = self.tree_items.get(sid)
+                if item is not None:
+                    self.tree.setCurrentItem(item)
+                    self.tree.scrollToItem(item)
+                self.search_summary.setText(
+                    f'主 PCB 候选：{sid}；体积 {candidate["volume_mm3"]:.1f} mm³；'
+                    f'Z=[{candidate["z_min_mm"]:.3f}, {candidate["z_max_mm"]:.3f}] mm；'
+                    f'厚度 {candidate["z_thickness_mm"]:.3f} mm；'
+                    f'Z 薄片校验：{"符合" if candidate["z_thin_hint"] else "不符合"}。'
+                    '仅定位候选，需确认 PCB 身份。'
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.search_summary.setText(
+                    f'PCB 定位失败：{type(exc).__name__}: {exc}'
+                )
 
         def _find_shield_candidates(self):
             if not self.root:
