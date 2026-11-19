@@ -485,7 +485,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
             tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v10",
-                "summary": summary, "results": {**previous, **results}},
+                "summary": summary, "results": results},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
         if progress and (i % 20 == 0 or i == len(rows)):
