@@ -7,6 +7,7 @@ from cst_material.phillips_screw_recognition import (
     _cross_recess_profile,
     _dot,
     _identify_head_shaft,
+    _screw_verdict,
     _thread_periodicity,
     _unit,
 )
@@ -109,3 +110,20 @@ def test_common_axis_accepts_small_numeric_noise():
         _cylinder(2.0, (0.001, 0.0, 4.0)),
     ])
     assert result["verified"]
+
+
+def test_noncoaxial_geometry_is_other_even_with_thread_and_cross():
+    assert _screw_verdict(False, True, True, True) == "OTHER"
+
+
+def test_missing_head_shaft_is_other_even_when_coaxial():
+    assert _screw_verdict(True, False, True, True) == "OTHER"
+
+
+def test_coaxial_head_shaft_with_incomplete_evidence_is_review():
+    assert _screw_verdict(True, True, False, True) == "SCREW_REVIEW"
+    assert _screw_verdict(True, True, True, False) == "SCREW_REVIEW"
+
+
+def test_all_four_screw_criteria_confirmed():
+    assert _screw_verdict(True, True, True, True) == "PHILLIPS_SCREW"
