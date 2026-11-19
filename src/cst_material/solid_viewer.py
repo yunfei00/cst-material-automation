@@ -108,6 +108,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_pcb = QPushButton("定位主 PCB（最大体积）")
             self.pcb_only = QCheckBox("主PCB")
             self.shield_only = QCheckBox("屏蔽罩")
+            self.screw_only = QCheckBox("十字螺丝")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -123,7 +124,7 @@ def launch_viewer(path: str | Path) -> int:
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
             filters = QHBoxLayout()
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only):
                 filters.addWidget(checkbox)
             left_layout.addLayout(filters)
             left_layout.addWidget(self.group_button)
@@ -231,6 +232,7 @@ def launch_viewer(path: str | Path) -> int:
 
             self.pcb_only.toggled.connect(self._toggle_pcb_only)
             self.shield_only.toggled.connect(self._toggle_shield_only)
+            self.screw_only.toggled.connect(self._toggle_screw_only)
 
 
 
@@ -477,6 +479,67 @@ def launch_viewer(path: str | Path) -> int:
                 checkbox.blockSignals(True)
                 checkbox.setChecked(False)
                 checkbox.blockSignals(False)
+
+        def _toggle_screw_only(self, checked):
+            if checked:
+                self._exclusive_filter(self.screw_only)
+                self._scan_screw_geometry()
+            else:
+                if self.refine_process is not None:
+                    self.refine_process.kill()
+                    self.refine_process = None
+                self._clear_search_results()
+
+        def _scan_screw_geometry(self):
+            if not self.root or self.refine_process is not None:
+                return
+            import json
+            import sys
+            process = QProcess(self)
+            self.refine_process = process
+            self.search_results = {}
+            self._filter_tree("")
+            self.search_summary.setText("正在后台分析全部 Solid 的螺丝头杆结构（螺纹和十字槽尚未验证）")
+            process.setWorkingDirectory(str(self.root))
+            process.setProgram(sys.executable)
+            process.setArguments(["-m", "cst_material.phillips_screw_recognition", str(self.root)])
+            process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+
+            def finished(code, status):
+                if self.refine_process is not process:
+                    return
+                self.refine_process = None
+                try:
+                    report = json.loads((self.root / "phillips_screw_recognition.json").read_text(encoding="utf-8"))
+                    rows = [{"solid_id": sid, "score": rec.get("score", 0),
+                             "verdict": rec["verdict"], "candidate_type": "SCREW_CANDIDATE"}
+                            for sid, rec in report["results"].items()
+                            if rec.get("status") == "PASS"
+                            and rec.get("verdict") == "SCREW_REVIEW"
+                            and sid in self.tree_items]
+                    rows.sort(key=lambda r: (-r["score"], r["solid_id"]))
+                    if self.screw_only.isChecked():
+                        self.search_results = {r["solid_id"]: r for r in rows}
+                        self._sort_tree_by_search_results(rows)
+                        self._filter_tree("")
+                    self.search_summary.setText(
+                        f"头杆结构候选 {len(rows)} 个；失败 {report['summary'].get('failed', 0)} 个。"
+                        "当前尚未验证螺旋螺纹及十字槽，不能认定为十字螺丝。")
+                except (OSError, ValueError, KeyError) as exc:
+                    self.search_summary.setText(f"螺丝结构扫描失败：{exc}")
+
+            def on_output():
+                output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+                lines = [line.strip() for line in output.splitlines() if line.strip()]
+                if lines:
+                    self.search_summary.setText("螺丝结构扫描：" + lines[-1][:180])
+
+            process.readyReadStandardOutput.connect(on_output)
+            process.finished.connect(finished)
+            process.start()
+            if not process.waitForStarted(3000):
+                self.refine_process = None
+                self.search_summary.setText("螺丝结构扫描进程启动失败")
 
         def _toggle_shield_only(self, checked):
             if checked:
