@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v11",
+        "algorithm_version": "phillips-geometry-v12",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -215,7 +215,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     })
     events = []
 
-    def progress(done, total, summary, *, matched_id=None):
+    def progress(done, total, summary, *, matched_id=None, matched_verdict=None):
         events.append((done, total, matched_id))
 
     result = module.scan(tmp_path, progress=progress)
@@ -285,3 +285,20 @@ def test_structural_offset_cylinder_still_fails_common_axis():
     assert not result["verified"]
     assert result["failed_indices"] == [2]
     assert result["ignored_small_cylinders"] == 0
+
+
+def test_locating_pin_requires_three_substantial_radius_levels():
+    from cst_material.phillips_screw_recognition import _locating_pin_steps
+
+    faces = [
+        _cylinder(3.0, (0.0, 0.0, 0.0)),
+        _cylinder(2.0, (0.0, 0.0, 2.0)),
+        _cylinder(1.2, (0.0, 0.0, 5.0)),
+    ]
+    for face in faces:
+        face["area"] = 2 * math.pi * face["radius"] * 3
+    evidence = _locating_pin_steps(faces, (0, 0, 1))
+    assert evidence["verified"]
+    assert len(evidence["levels"]) == 3
+    faces[-1]["area"] = 0.01
+    assert not _locating_pin_steps(faces, (0, 0, 1))["verified"]
