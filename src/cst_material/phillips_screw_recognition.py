@@ -254,9 +254,16 @@ def recognize_step(path: str | Path) -> dict:
             if radial <= max(0.1, shaft["radius"] * 0.12):
                 stepped = True
                 break
-    # Real threads are frequently represented by spline surfaces, not cylinders.
-    # A repeated helical pattern and cross recess require dedicated validation.
-    score = (35 if shaft else 0) + (25 if stepped else 0)
+    thread = {"verified": False, "reason": "无同轴头杆"}
+    cross = {"verified": False, "reason": "无同轴头杆"}
+    if stepped and shaft:
+        head_radius = max(item["radius"] for item in cylinders)
+        thread, cross = _sample_evidence(
+            solids, axis, shaft["axis_origin"], shaft["radius"], head_radius
+        )
+    score = (25 if shaft else 0) + (25 if stepped else 0)
+    score += 25 if thread["verified"] else 0
+    score += 25 if cross["verified"] else 0
     return {"verdict": ("PHILLIPS_SCREW" if stepped and thread["verified"] and cross["verified"]\n                        else "SCREW_REVIEW" if stepped else "OTHER"),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
@@ -305,7 +312,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         results[sid] = record
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v1",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v3",
                 "summary": summary, "results": {**previous, **results}},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
@@ -315,7 +322,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="独立 STEP 螺丝头杆结构扫描（十字槽/螺纹尚未验证）")
+    parser = argparse.ArgumentParser(description="独立 STEP 十字螺丝几何识别")
     parser.add_argument("folder")
     args = parser.parse_args(argv)
     result = scan(args.folder, progress=lambda i,n,s: print(f"{i}/{n} {dict(s)}", flush=True))
