@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v12",
+        "algorithm_version": "phillips-geometry-v13",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -302,3 +302,15 @@ def test_locating_pin_requires_three_substantial_radius_levels():
     assert len(evidence["levels"]) == 3
     faces[-1]["area"] = 0.01
     assert not _locating_pin_steps(faces, (0, 0, 1))["verified"]
+
+
+def test_short_real_pin_shoulder_survives_lower_threshold():
+    from cst_material.phillips_screw_recognition import _locating_pin_steps
+
+    faces = [_cylinder(r, (0, 0, 0)) for r in (3.0, 2.0, 1.2)]
+    for face in faces:
+        face["area"] = 2 * math.pi * face["radius"] * 0.2
+    # The shortest real shoulder is 0.11 mm: previously filtered by 0.15.
+    faces[-1]["area"] = 2 * math.pi * faces[-1]["radius"] * 0.11
+    evidence = _locating_pin_steps(faces, (0, 0, 1))
+    assert evidence["verified"]
