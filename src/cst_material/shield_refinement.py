@@ -9,6 +9,7 @@ import argparse
 import json
 import math
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 from cst_material.occt_geometry import sha256_file
@@ -326,8 +327,8 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
         except (OSError, ValueError, TypeError):
             previous = {}
     results = {}
-    summary = {"total": len(rows), "reused": 0, "failed": 0,
-               "REVIEW_STRONG": 0, "REVIEW": 0, "LOW_EVIDENCE": 0}
+    summary = Counter({"total": len(rows), "reused": 0, "failed": 0,
+                       "REVIEW_STRONG": 0, "REVIEW": 0, "LOW_EVIDENCE": 0})
     if not rows:
         cache.write_text(json.dumps({"schema_version": 2,
             "algorithm_version": algorithm_version, "manifest_sha256": manifest_hash,
@@ -345,10 +346,12 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
                 summary["reused"] += 1
             else:
                 record = {"status": "PASS", "step_sha256": digest,
-                          "stage1_score": row["score"], **refine_step(step)}
+                          "stage1_score": row.get("score", 0), **refine_step(step)}
             if pcb_related and record["status"] == "PASS":
                 record["pcb_shield"] = classify_pcb_shield(row, record)
             summary[record["verdict"]] += 1
+            if pcb_related:
+                summary[record["pcb_shield"]["verdict"]] += 1
         except Exception as exc:  # noqa: BLE001
             record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
             summary["failed"] += 1
