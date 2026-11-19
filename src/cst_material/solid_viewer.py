@@ -481,7 +481,7 @@ def launch_viewer(path: str | Path) -> int:
         def _toggle_shield_only(self, checked):
             if checked:
                 self._exclusive_filter(self.shield_only)
-                self._find_pcb_related_shields()
+                self._refine_shield_candidates(pcb_related=True)
             else:
                 if self.refine_process is not None:
                     process = self.refine_process
@@ -615,10 +615,10 @@ def launch_viewer(path: str | Path) -> int:
         def _scan_all_shield_geometry(self):
             self._refine_shield_candidates(exhaustive=True)
 
-        def _refine_shield_candidates(self, exhaustive=False):
+        def _refine_shield_candidates(self, exhaustive=False, pcb_related=False):
             if not self.root or self.refine_process is not None:
                 return
-            if not exhaustive:
+            if not exhaustive and not pcb_related:
                 self._find_shield_candidates()
                 if self.search_results is None:
                     return
@@ -640,6 +640,8 @@ def launch_viewer(path: str | Path) -> int:
             args = ['-m', 'cst_material.shield_refinement', str(self.root)]
             if exhaustive:
                 args.append('--exhaustive')
+            if pcb_related:
+                args.append('--pcb-related')
             process.setArguments(args)
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
 
@@ -649,7 +651,9 @@ def launch_viewer(path: str | Path) -> int:
                     return
                 self.refine_process = None
                 try:
-                    filename = 'shield_refinement_all.json' if exhaustive else 'shield_refinement.json'
+                    filename = ('shield_refinement_pcb.json' if pcb_related else
+                                'shield_refinement_all.json' if exhaustive else
+                                'shield_refinement.json')
                     report = json.loads((self.root / filename).read_text(encoding='utf-8'))
                     self.refinement_results = report['results']
                     # REVIEW is not a negative verdict. Keep uncertain results visible
@@ -669,6 +673,44 @@ def launch_viewer(path: str | Path) -> int:
                         score += 10.0 if cavity.get('open_end_hint') else 0.0
                         return round(score, 1)
 
+                    if pcb_related:
+                        coarse = search_pcb_related_shields(self.root)
+                        by_id = {r["solid_id"]: r for r in coarse["results"]}
+                        visible_rows = []
+                        stats = {}
+                        for sid, evidence in self.refinement_results.items():
+                            if sid not in self.tree_items or sid not in by_id:
+                                continue
+                            if evidence.get("status") != "PASS":
+                                continue
+                            detail = evidence.get("pcb_shield") or {}
+                            verdict = detail.get("verdict", "CONTACT_OR_OTHER")
+                            stats[verdict] = stats.get(verdict, 0) + 1
+                            if verdict == "CONTACT_OR_OTHER":
+                                continue
+                            visible_rows.append({
+                                **by_id[sid], "verdict": verdict,
+                                "face_count": detail.get("face_count"),
+                                "surface_counts": detail.get("surface_counts"),
+                                "dominant_thickness_mm": detail.get("dominant_thickness_mm"),
+                                "pair_consistency": detail.get("pair_consistency"),
+                            })
+                        visible_rows.sort(key=lambda r: (
+                            {"SHIELD_REVIEW_STRONG": 0, "NAMED_REVIEW": 1,
+                             "GEOMETRY_REVIEW": 2}.get(r["verdict"], 3),
+                            r["gap_mm"], r["solid_id"]))
+                        if self.shield_only.isChecked():
+                            self.search_results = {r["solid_id"]: r for r in visible_rows}
+                            self._sort_tree_by_search_results(visible_rows)
+                            self._filter_tree("")
+                        self.search_summary.setText(
+                            f"屏蔽罩强候选 {stats.get('SHIELD_REVIEW_STRONG', 0)}；"
+                            f"名称待确认 {stats.get('NAMED_REVIEW', 0)}；"
+                            f"无名称疑似 {stats.get('GEOMETRY_REVIEW', 0)}；"
+                            f"触点或其他 {stats.get('CONTACT_OR_OTHER', 0)}；"
+                            f"STEP 失败 {report['summary'].get('failed', 0)}。"
+                            "仍需人工确认。")
+                        return
                     visible_rows = []
                     for sid, evidence in self.refinement_results.items():
                         if sid not in self.tree_items or evidence.get('status') != 'PASS':
@@ -896,10 +938,12 @@ def launch_viewer(path: str | Path) -> int:
                             item.setHidden(not visible)
                             return visible
                         if row.get("verdict") in (
-                            "NAMED_GEOMETRY", "NAMED_REVIEW", "GEOMETRY_REVIEW"
+                            "NAMED_GEOMETRY", "NAMED_REVIEW", "GEOMETRY_REVIEW",
+                            "SHIELD_REVIEW_STRONG"
                         ):
                             label = {
                                 "NAMED_GEOMETRY": "名称+几何候选",
+                                "SHIELD_REVIEW_STRONG": "等厚+围合强候选",
                                 "NAMED_REVIEW": "名称命中·待确认",
                                 "GEOMETRY_REVIEW": "无名称·几何疑似",
                             }[row["verdict"]]
