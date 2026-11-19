@@ -21,28 +21,28 @@ def _database(folder, records):
 
 def test_max_volume_wins_and_z_bounds(tmp_path):
     _database(tmp_path, [
-        ("small", 1500, [0, 0, 0, 10, 10, 15]),
-        ("pcb", 3000, [0, 0, 1, 100, 80, 2.6]),
-        ("other", 2000, [0, 0, 0, 10, 10, 30]),
+        ("case-main-pcb:small", 1500, [0, 0, 0, 10, 10, 15]),
+        ("case-main-pcb:pcb", 3000, [0, 0, 1, 100, 80, 2.6]),
+        ("outside:other", 2000, [0, 0, 0, 10, 10, 30]),
     ])
     result = find_main_pcb(tmp_path)
     assert result["eligible_count"] == 2
-    assert result["candidate"]["solid_id"] == "pcb"
+    assert result["candidate"]["solid_id"] == "case-main-pcb:pcb"
     assert result["candidate"]["z_min_mm"] == 1
     assert result["candidate"]["z_max_mm"] == 2.6
     assert result["candidate"]["z_thin_hint"]
 
 
-def test_large_nonflat_piece_is_not_silently_replaced(tmp_path):
+def test_large_nonflat_piece_does_not_override_qualified_board(tmp_path):
     _database(tmp_path, [
-        ("housing", 4000, [0, 0, 0, 20, 20, 20]),
+        ("case-main-pcb:housing", 4000, [0, 0, 0, 20, 20, 20]),
         ("pcb", 3000, [0, 0, 0, 100, 80, 1.6]),
     ])
     result = find_main_pcb(tmp_path)
-    assert result["candidate"]["solid_id"] == "housing"
-    assert not result["candidate"]["z_thin_hint"]
+    assert result["candidate"]["solid_id"] == "case-main-pcb:pcb"
+    assert result["candidate"]["z_thin_hint"]
 
 
 def test_no_eligible_volume(tmp_path):
-    _database(tmp_path, [("small", 100, [0, 0, 0, 10, 10, 1])])
+    _database(tmp_path, [("case-main-pcb:small", 100, [0, 0, 0, 10, 10, 1])])
     assert find_main_pcb(tmp_path)["candidate"] is None
