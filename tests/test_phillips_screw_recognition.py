@@ -5,6 +5,7 @@ from cst_material.phillips_screw_recognition import (
     _axis_key,
     _cross_recess_profile,
     _dot,
+    _identify_head_shaft,
     _thread_periodicity,
     _unit,
 )
@@ -42,3 +43,27 @@ def test_cross_recess_rejects_uniform_disk():
                for r in (0.3, 0.5, 0.7)
                for a in [2 * math.pi * i / 120 for i in range(120)]]
     assert not _cross_recess_profile(samples, head_radius=1)["verified"]
+
+
+def test_head_is_largest_radius_and_shaft_is_next_smaller_coaxial():
+    axis = (0.0, 0.0, 1.0)
+    cylinders = [
+        {"radius": 1.0, "area": 100.0, "axis_origin": (0.0, 0.0, 0.0)},
+        {"radius": 3.0, "area": 5.0, "axis_origin": (0.0, 0.0, 4.0)},
+        {"radius": 2.0, "area": 20.0, "axis_origin": (0.0, 0.0, 1.0)},
+    ]
+    head, shaft, supported = _identify_head_shaft(cylinders, axis)
+    assert supported
+    assert head["radius"] == 3.0
+    assert shaft["radius"] == 2.0
+
+
+def test_head_shaft_rejects_noncoaxial_cylinder():
+    cylinders = [
+        {"radius": 3.0, "area": 30.0, "axis_origin": (0.0, 0.0, 0.0)},
+        {"radius": 2.0, "area": 30.0, "axis_origin": (3.0, 0.0, 0.0)},
+    ]
+    head, shaft, supported = _identify_head_shaft(cylinders, (0.0, 0.0, 1.0))
+    assert head["radius"] == 3.0
+    assert shaft is None
+    assert not supported
