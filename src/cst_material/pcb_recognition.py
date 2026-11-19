@@ -1,7 +1,7 @@
-"""P9 PCB anchor: select the largest eligible Solid from P5 exact BREP metrics.
+"""Main PCB locator restricted to the -main-pcb component domain.
 
-Volume is the primary ranking criterion; Z-thickness is a separate review
-hint, not a filter that can silently replace the maximum-volume Solid.
+A thin, large-area board is preferred over an arbitrary high-volume body.
+Geometry alone is not a confirmed PCB identity.
 """
 from __future__ import annotations
 
@@ -12,72 +12,105 @@ import sqlite3
 from pathlib import Path
 
 
-def find_main_pcb(folder: str | Path, *, min_volume_mm3: float = 1500.0) -> dict:
+def _in_main_pcb_domain(solid_id: str) -> bool:
+    # Component path precedes the final Solid name; do not infer from filename.
+    component = solid_id.rsplit(":", 1)[0] if ":" in solid_id else ""
+    return "-main-pcb" in component.casefold()
+
+
+def find_main_pcb(
+    folder: str | Path, *, min_volume_mm3: float = 100.0,
+    max_thin_ratio: float = 0.15, min_relative_xy_area: float = 0.35,
+) -> dict:
     if not math.isfinite(min_volume_mm3) or min_volume_mm3 < 0:
         raise ValueError("体积阈值必须是非负有限数")
+    if not 0 < max_thin_ratio <= 1:
+        raise ValueError("薄片比例必须在 (0,1] 内")
+    if not 0 < min_relative_xy_area <= 1:
+        raise ValueError("XY 面积比例必须在 (0,1] 内")
     root = Path(folder).resolve(strict=True)
     db = root / "geometry_features.sqlite3"
     if not db.is_file():
         raise FileNotFoundError("缺少 P5 geometry_features.sqlite3")
-    connection = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
-    try:
+    with sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True) as connection:
         rows = connection.execute(
             "SELECT solid_id, step, features_json FROM solids WHERE status='PASS'"
         ).fetchall()
-    finally:
-        connection.close()
+    domain_rows = [row for row in rows if _in_main_pcb_domain(row[0])]
     eligible = []
     invalid = 0
-    for sid, step, raw in rows:
+    for sid, step, raw in domain_rows:
         try:
             features = json.loads(raw)
             volume = float(features["volume_mm3"])
             bbox = features["bbox_mm"]
-            if (not math.isfinite(volume) or len(bbox) != 6
-                    or any(not math.isfinite(float(v)) for v in bbox)):
+            if not math.isfinite(volume) or volume <= 0 or len(bbox) != 6:
                 raise ValueError("无效几何指标")
-            z_min, z_max = float(bbox[2]), float(bbox[5])
-            dz = z_max - z_min
-            dx = float(bbox[3]) - float(bbox[0])
-            dy = float(bbox[4]) - float(bbox[1])
+            values = [float(v) for v in bbox]
+            if not all(math.isfinite(v) for v in values):
+                raise ValueError("无效包围盒")
+            dx, dy, dz = (values[i + 3] - values[i] for i in range(3))
             if min(dx, dy, dz) <= 0:
                 raise ValueError("包围盒退化")
         except (ValueError, TypeError, KeyError, IndexError):
             invalid += 1
             continue
-        if volume <= min_volume_mm3:
-            continue
         eligible.append({
             "solid_id": sid, "step": step, "volume_mm3": volume,
-            "bbox_mm": [float(x) for x in bbox],
-            "z_min_mm": z_min, "z_max_mm": z_max,
-            "z_center_mm": (z_min + z_max) / 2,
-            "z_thickness_mm": dz,
-            "xy_min_mm": min(dx, dy),
-            "z_thin_ratio": dz / min(dx, dy),
+            "bbox_mm": values, "z_min_mm": values[2], "z_max_mm": values[5],
+            "z_center_mm": (values[2] + values[5]) / 2,
+            "z_thickness_mm": dz, "xy_min_mm": min(dx, dy),
+            "xy_area_mm2": dx * dy, "z_thin_ratio": dz / min(dx, dy),
         })
     eligible.sort(key=lambda row: (-row["volume_mm3"], row["solid_id"]))
-    winner = eligible[0] if eligible else None
-    if winner:
-        winner = {**winner, "z_thin_hint": winner["z_thin_ratio"] <= 0.15,
-                  "review_status": "NEEDS_REVIEW"}
+    largest = eligible[0] if eligible else None
+    max_area = max((row["xy_area_mm2"] for row in eligible), default=0)
+    for row in eligible:
+        row["relative_xy_area"] = row["xy_area_mm2"] / max_area if max_area else 0
+        row["z_thin_hint"] = row["z_thin_ratio"] <= max_thin_ratio
+        row["area_hint"] = row["relative_xy_area"] >= min_relative_xy_area
+    qualified = [
+        row for row in eligible if row["z_thin_hint"] and row["area_hint"]
+        and row["volume_mm3"] > min_volume_mm3
+    ]
+    # Preserve the maximum-volume candidate when it satisfies all geometry
+    # requirements. Otherwise choose the largest qualifying thin broad plate.
+    winner = qualified[0] if qualified else largest
+    if winner is None:
+        reason = "未找到 -main-pcb 组件域" if not domain_rows else "域内没有有效几何数据"
+        status = "NOT_FOUND"
+    elif qualified:
+        reason = ("域内最大体积 Solid 同时满足薄片和大面积条件"
+                  if winner is largest else "最大体积 Solid 不满足条件，已选择下一块薄而大的板")
+        status = "GEOMETRY_CANDIDATE"
+    else:
+        reason = "域内没有同时满足薄片、XY 面积和体积条件的 Solid，仅定位最大件供人工确认"
+        status = "NEEDS_REVIEW"
+    if winner is not None:
+        winner = {**winner, "review_status": "NEEDS_REVIEW"}
     return {
-        "candidate": winner,
-        "eligible_count": len(eligible),
-        "scanned_count": len(rows),
-        "invalid_count": invalid,
-        "min_volume_mm3_exclusive": min_volume_mm3,
-        "warning": "按体积最大定位 PCB 候选；Z 薄片仅作校验。若模型坐标旋转或存在大机壳，需人工确认。",
+        "candidate": winner, "status": status, "reason": reason,
+        "domain_count": len(domain_rows), "eligible_count": len(eligible),
+        "qualified_count": len(qualified), "scanned_count": len(rows),
+        "invalid_count": invalid, "min_volume_mm3_exclusive": min_volume_mm3,
+        "max_thin_ratio": max_thin_ratio,
+        "min_relative_xy_area": min_relative_xy_area,
+        "warning": "仅在 -main-pcb 组件域内按薄片、大面积和体积选取候选；仍需人工确认身份。",
     }
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="按体积最大定位主 PCB 候选")
+    parser = argparse.ArgumentParser(description="-main-pcb 域内主 PCB 定位")
     parser.add_argument("folder")
-    parser.add_argument("--min-volume", type=float, default=1500.0)
+    parser.add_argument("--min-volume", type=float, default=100.0)
+    parser.add_argument("--max-thin-ratio", type=float, default=0.15)
+    parser.add_argument("--min-relative-xy-area", type=float, default=0.35)
     args = parser.parse_args(argv)
-    print(json.dumps(find_main_pcb(args.folder, min_volume_mm3=args.min_volume),
-                     ensure_ascii=False, indent=2))
+    print(json.dumps(find_main_pcb(
+        args.folder, min_volume_mm3=args.min_volume,
+        max_thin_ratio=args.max_thin_ratio,
+        min_relative_xy_area=args.min_relative_xy_area,
+    ), ensure_ascii=False, indent=2))
     return 0
 
 
