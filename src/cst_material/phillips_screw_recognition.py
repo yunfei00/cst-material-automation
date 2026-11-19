@@ -331,7 +331,7 @@ def recognize_step(path: str | Path) -> dict:
     score += 25 if cross["verified"] else 0
     return {"verdict": ("PHILLIPS_SCREW" if coaxial["verified"] and stepped
                         and thread["verified"] and cross["verified"]
-                        else "SCREW_REVIEW" if shaft else "OTHER"),
+                        else "SCREW_REVIEW" if coaxial["verified"] and stepped else "OTHER"),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
@@ -360,7 +360,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v6":
+            if old.get("algorithm_version") == "phillips-geometry-v7":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
