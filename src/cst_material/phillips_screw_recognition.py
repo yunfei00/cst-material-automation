@@ -308,10 +308,9 @@ def _single_head_profile(points, axis, origin, head_radius, shaft_radius):
     }
 
 
-def _screw_verdict(coaxial: bool, stepped: bool, profile: bool,
-                   thread: bool, cross: bool) -> str:
-    """Only positively verified single-head Phillips screws are selected."""
-    if coaxial and stepped and profile and thread and cross:
+def _screw_verdict(coaxial: bool, stepped: bool, profile: bool) -> str:
+    """Classify by coaxial, asymmetric single-head geometry alone."""
+    if coaxial and stepped and profile:
         return "PHILLIPS_SCREW"
     return "OTHER"
 
@@ -373,29 +372,19 @@ def recognize_step(path: str | Path) -> dict:
     coaxial = _common_axis_cylinders(cylinders)
     head, shaft, stepped = _identify_head_shaft(cylinders, axis)
     head_radius = head["radius"] if head else None
-    # Missing analytic cylinders is inconclusive for spline-threaded fasteners.
-    thread = {"verified": False, "reason": "无同轴头杆"}
-    cross = {"verified": False, "reason": "无同轴头杆"}
     profile = {"verified": False, "reason": "未确认单侧大头"}
     if coaxial["verified"] and stepped and shaft is not None and head_radius is not None:
         profile = _single_head_profile(_mesh_points(solids), axis,
                                        shaft["axis_origin"], head_radius,
                                        shaft["radius"])
-    if profile["verified"]:
-        thread, cross = _sample_evidence(
-            solids, axis, shaft["axis_origin"], shaft["radius"], head_radius
-        )
-    score = (25 if shaft else 0) + (25 if stepped else 0)
-    score += 25 if thread["verified"] else 0
-    score += 25 if cross["verified"] else 0
+    score = 100 if coaxial["verified"] and stepped and profile["verified"] else 0
     return {"verdict": _screw_verdict(
-                coaxial["verified"], stepped, profile["verified"],
-                thread["verified"], cross["verified"]
+                coaxial["verified"], stepped, profile["verified"]
             ),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
-                coaxial["reason"], profile["reason"], thread["reason"], cross["reason"]],
+                coaxial["reason"], profile["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "head_shaft_supported": stepped,
             "coaxial_verified": coaxial["verified"],
@@ -404,9 +393,7 @@ def recognize_step(path: str | Path) -> dict:
             "single_head_evidence": profile,
             "head_radius": head_radius,
             "shaft_radius": shaft["radius"] if shaft else None,
-            "thread_verified": thread["verified"], "phillips_verified": cross["verified"],
-            "thread_evidence": thread, "cross_evidence": cross,
-            "warning": "仅同时满足头杆、螺旋周期、十字槽证据才认定为十字螺丝"}
+            "warning": "仅依据共轴、头杆变径和单侧大头轮廓识别；不验证螺纹或十字槽"}
 
 
 def scan(folder: str | Path, *, progress=None) -> dict:
@@ -422,7 +409,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v8":
+            if old.get("algorithm_version") == "phillips-geometry-v9":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -446,7 +433,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         results[sid] = record
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v8",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v9",
                 "summary": summary, "results": {**previous, **results}},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
