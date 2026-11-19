@@ -35,19 +35,17 @@ def _axis_key(direction):
 
 
 def _thread_periodicity(samples, *, min_turns=2, bins=24):
-    """Check that radius maxima advance in angle as axial position increases.
+    """Detect a moving radial ridge in cylindrical coordinates.
 
-    samples: (axial coordinate, angle radians, radius) on shaft surface.
-    A mere circular cylinder has no axial radius modulation and is rejected.
+    Requires a periodic angular phase that progresses along the screw axis.
     """
-    if len(samples) < 80:
+    if len(samples) < 120:
         return {"verified": False, "turns": 0, "reason": "螺纹采样不足"}
     zmin = min(p[0] for p in samples)
     zmax = max(p[0] for p in samples)
     span = zmax - zmin
     if span <= 1e-6:
         return {"verified": False, "turns": 0, "reason": "轴向范围不足"}
-    # Compute mean radii on an axial/azimuth grid and find a diagonal ridge.
     nz = 96
     sums = [[0.0] * bins for _ in range(nz)]
     counts = [[0] * bins for _ in range(nz)]
@@ -56,65 +54,142 @@ def _thread_periodicity(samples, *, min_turns=2, bins=24):
         j = int((angle % (2 * math.pi)) / (2 * math.pi) * bins) % bins
         sums[i][j] += radius
         counts[i][j] += 1
-    # Sparse, nonuniform CAD tessellation cannot prove a thread.
-    populated = sum(bool(counts[i][j]) for i in range(nz) for j in range(bins))
-    if populated < nz * bins * 0.35:
-        return {"verified": False, "turns": 0, "reason": "螺纹网格覆盖不足"}
     profiles = []
     for i in range(nz):
         observed = [(j, sums[i][j] / counts[i][j])
                     for j in range(bins) if counts[i][j]]
-        if len(observed) < bins * 0.6:
+        if len(observed) < bins * 0.5:
             continue
-        values = [v for _, v in observed]
-        if max(values) - min(values) < max(0.015, sum(values) / len(values) * 0.012):
+        radii = [v for _, v in observed]
+        if max(radii) - min(radii) < max(0.01, sum(radii) / len(radii) * 0.01):
             continue
         profiles.append((i, max(observed, key=lambda p: p[1])[0]))
-    if len(profiles) < 30:
-        return {"verified": False, "turns": 0, "reason": "没有明显的螺旋牙形"}
-    # Unwrap the peak angle and require persistent directional rotation.
-    total = 0.0
-    coherent = 0
-    last = profiles[0][1]
-    for _, current in profiles[1:]:
-        step = ((current - last + bins / 2) % bins) - bins / 2
-        if step:
-            total += step
-            coherent += 1
-        last = current
-    turns = abs(total) / bins
-    return {"verified": turns >= min_turns and coherent >= 15,
-            "turns": round(turns, 2), "reason": "螺旋周期证据" if turns >= min_turns else "未观察到足够螺旋圈数"}
+    if len(profiles) < 24:
+        return {"verified": False, "turns": 0, "reason": "没有足够螺纹截面"}
+    # Peak phase must move coherently, not randomly jump between angular bins.
+    steps = []
+    for (_, previous), (_, current) in zip(profiles, profiles[1:]):
+        delta = ((current - previous + bins / 2) % bins) - bins / 2
+        if delta:
+            steps.append(delta)
+    positive = sum(step > 0 for step in steps)
+    negative = sum(step < 0 for step in steps)
+    dominant = max(positive, negative)
+    total = abs(sum(steps))
+    turns = total / bins
+    verified = (turns >= min_turns and len(steps) >= 16
+                and dominant / len(steps) >= 0.8)
+    return {"verified": verified, "turns": round(turns, 2),
+            "reason": "螺旋周期证据" if verified else "螺旋周期不充分"}
 
 
 def _cross_recess_profile(points, *, head_radius):
-    """Conservative cross-slot check on planar head-face interior points.
-
-    Input is local head-plane coordinates (x, y, recess_depth). A Phillips
-    recess has four radial arms, plus a deeper central intersection.
-    """
+    """Require four radial arms and reject a uniformly recessed disk."""
     if len(points) < 40 or head_radius <= 0:
         return {"verified": False, "reason": "头部凹槽采样不足"}
     deep = [(x, y) for x, y, depth in points
             if depth > head_radius * 0.025
-            and head_radius * 0.08 < math.hypot(x, y) < head_radius * 0.85]
+            and head_radius * 0.12 < math.hypot(x, y) < head_radius * 0.85]
     if len(deep) < 20:
         return {"verified": False, "reason": "未检测到凹槽"}
-    # Angle-independent detection: rotate cross candidate through 0..90 deg.
-    angles = [math.atan2(y, x) % (2 * math.pi) for x, y in deep]
+    angles = [math.atan2(y, x) for x, y in deep]
     best = 0
+    best_fraction = 0.0
     for k in range(45):
         rotation = k * math.pi / 90
         arms = [0, 0, 0, 0]
+        hits = 0
         for angle in angles:
             relative = (angle - rotation) % (2 * math.pi)
             arm = round(relative / (math.pi / 2)) % 4
-            distance = abs((relative - arm * math.pi / 2 + math.pi) % (2 * math.pi) - math.pi)
+            distance = abs((relative - arm * math.pi / 2 + math.pi)
+                           % (2 * math.pi) - math.pi)
             if distance < 0.16:
                 arms[arm] += 1
-        best = max(best, min(arms))
-    return {"verified": best >= 4, "arm_min_support": best,
-            "reason": "四向十字凹槽证据" if best >= 4 else "凹槽缺少四向支持"}
+                hits += 1
+        if min(arms) > best:
+            best = min(arms)
+            best_fraction = hits / len(angles)
+    verified = best >= 4 and best_fraction >= 0.7
+    return {"verified": verified, "arm_min_support": best,
+            "reason": "四向十字凹槽证据" if verified else "凹槽不是明确的四向十字"}
+
+
+def _mesh_points(solids, *, deflection=0.035):
+    """Extract exact B-rep tessellation vertices; no STL files required."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    points = []
+    for solid in solids:
+        BRepMesh_IncrementalMesh(solid, deflection, False, 0.15, True)
+        explorer = TopExp_Explorer(solid, TopAbs_FACE)
+        while explorer.More():
+            face = TopoDS.Face_s(explorer.Current())
+            location = face.Location()
+            mesh = BRep_Tool.Triangulation_s(face, location)
+            if mesh is not None:
+                transform = location.Transformation()
+                for i in range(1, mesh.NbNodes() + 1):
+                    point = mesh.Node(i).Transformed(transform)
+                    points.append((point.X(), point.Y(), point.Z()))
+            explorer.Next()
+    return points
+
+
+def _basis(axis):
+    reference = (1.0, 0.0, 0.0) if abs(axis[0]) < 0.8 else (0.0, 1.0, 0.0)
+    u = _unit((axis[1] * reference[2] - axis[2] * reference[1],
+               axis[2] * reference[0] - axis[0] * reference[2],
+               axis[0] * reference[1] - axis[1] * reference[0]))
+    v = (axis[1] * u[2] - axis[2] * u[1],
+         axis[2] * u[0] - axis[0] * u[2],
+         axis[0] * u[1] - axis[1] * u[0])
+    return u, v
+
+
+def _sample_evidence(solids, axis, shaft_origin, shaft_radius, head_radius):
+    points = _mesh_points(solids)
+    u, v = _basis(axis)
+    cylindrical = []
+    projected = []
+    for point in points:
+        relative = tuple(point[i] - shaft_origin[i] for i in range(3))
+        z = _dot(relative, axis)
+        x, y = _dot(relative, u), _dot(relative, v)
+        r = math.hypot(x, y)
+        projected.append((z, x, y, r))
+    if not projected:
+        return ({"verified": False, "reason": "无网格顶点"},
+                {"verified": False, "reason": "无网格顶点"})
+    # Shaft is the region whose outer envelope is near the shaft radius.
+    zs = sorted(p[0] for p in projected if p[3] < shaft_radius * 1.35)
+    if len(zs) >= 20:
+        low, high = zs[int(len(zs) * 0.05)], zs[int(len(zs) * 0.95)]
+        for z, x, y, r in projected:
+            if low <= z <= high and shaft_radius * 0.6 <= r <= shaft_radius * 1.35:
+                cylindrical.append((z, math.atan2(y, x), r))
+    thread = _thread_periodicity(cylindrical)
+    # Head top is either axial extreme; pick the one with more wide-radius points.
+    zlo = min(p[0] for p in projected)
+    zhi = max(p[0] for p in projected)
+    margin = max(0.02, head_radius * 0.08)
+    ends = []
+    for top, sign in ((zlo, -1), (zhi, 1)):
+        nearby = [(x, y, sign * (top - z)) for z, x, y, r in projected
+                  if abs(z - top) <= head_radius * 0.65 and r <= head_radius]
+        outer = sum(math.hypot(x, y) > head_radius * 0.75
+                    and depth < margin for x, y, depth in nearby)
+        ends.append((outer, nearby))
+    _, head = max(ends, key=lambda item: item[0])
+    # Mesh points alone do not guarantee that the recess has an empty cross:
+    # require evidence and leave ambiguous geometries unverified.
+    cross = _cross_recess_profile(head, head_radius=head_radius)
+    return thread, cross
+
 
 def recognize_step(path: str | Path) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
@@ -182,15 +257,15 @@ def recognize_step(path: str | Path) -> dict:
     # Real threads are frequently represented by spline surfaces, not cylinders.
     # A repeated helical pattern and cross recess require dedicated validation.
     score = (35 if shaft else 0) + (25 if stepped else 0)
-    return {"verdict": "SCREW_REVIEW" if stepped else "OTHER",
+    return {"verdict": ("PHILLIPS_SCREW" if stepped and thread["verified"] and cross["verified"]\n                        else "SCREW_REVIEW" if stepped else "OTHER"),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
-                "螺纹螺旋性未验证", "十字槽未验证"],
+                thread["reason"], cross["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "head_shaft_supported": stepped,
-            "thread_verified": False, "phillips_verified": False,
-            "warning": "仅为头杆几何候选，尚不能判定十字螺丝"}
+            "thread_verified": thread["verified"], "phillips_verified": cross["verified"],\n            "thread_evidence": thread, "cross_evidence": cross,
+            "warning": "仅同时满足头杆、螺旋周期、十字槽证据才认定为十字螺丝"}
 
 
 def scan(folder: str | Path, *, progress=None) -> dict:
@@ -206,7 +281,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v2":
+            if old.get("algorithm_version") == "phillips-geometry-v3":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
