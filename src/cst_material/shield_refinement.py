@@ -13,7 +13,7 @@ from pathlib import Path
 
 from cst_material.occt_geometry import sha256_file
 from cst_material.shield_brep import _dot, _face_evidence, analyze_shield_solids
-from cst_material.shield_recognition import search_shield_candidates
+from cst_material.shield_recognition import search_shield_candidates, search_pcb_related_shields
 from cst_material.sheet_thickness import analyze_sheet_faces
 
 
@@ -223,6 +223,47 @@ def refine_step(path: str | Path) -> dict:
     }
 
 
+def classify_pcb_shield(row: dict, evidence: dict) -> dict:
+    """Combine analytic sheet evidence with enclosure; do not promote flat contacts."""
+    sheet = evidence.get("sheet_faces") or {}
+    counts = sheet.get("surface_counts") or {}
+    brep = (evidence.get("brep") or {}).get("metrics") or {}
+    cross = evidence.get("cross_section") or {}
+    paths = evidence.get("wall_paths") or {}
+    consistency = float(sheet.get("pair_consistency") or 0)
+    pair_count = int(sheet.get("plane_pair_count") or 0) + int(sheet.get("cylinder_pair_count") or 0)
+    walls = int(brep.get("transverse_face_count") or 0)
+    enclosure = bool(cross.get("wall_enclosure_hint"))
+    cavity = bool((brep.get("axial_cavity_probe") or {}).get("axial_void"))
+    # A stamped spring contact can be perfectly uniform thickness. Require
+    # a cover/cavity or actual enclosure evidence before promoting it.
+    wall_structure = walls >= 4 and (enclosure or cavity)
+    sheet_supported = pair_count >= 2 and consistency >= 0.75 and (
+        int(counts.get("plane") or 0) >= 2
+    )
+    material_supported = int(paths.get("material_path_count") or 0) >= 1
+    supported = wall_structure and sheet_supported and material_supported
+    if supported:
+        verdict = "SHIELD_REVIEW_STRONG"
+    elif row.get("name_hit"):
+        verdict = "NAMED_REVIEW"
+    elif wall_structure and sheet_supported:
+        verdict = "GEOMETRY_REVIEW"
+    else:
+        verdict = "CONTACT_OR_OTHER"
+    return {
+        "verdict": verdict, "sheet_supported": sheet_supported,
+        "wall_structure": wall_structure, "material_supported": material_supported,
+        "face_count": sheet.get("face_count"),
+        "surface_counts": counts,
+        "dominant_thickness_mm": sheet.get("dominant_thickness_mm"),
+        "pair_consistency": consistency,
+        "plane_pair_count": sheet.get("plane_pair_count", 0),
+        "cylinder_pair_count": sheet.get("cylinder_pair_count", 0),
+        "warning": "几何候选并非电磁屏蔽功能证明；无法确认者需人工复核",
+    }
+
+
 def _all_geometry_candidates(root: Path) -> list[dict]:
     """Recall-first geometry search: do not gate on P5 shield heuristic.
 
@@ -256,22 +297,24 @@ def _all_geometry_candidates(root: Path) -> list[dict]:
 
 
 def refine_candidates(folder: str | Path, *, limit: int | None = None,
-                      progress=None, exhaustive: bool = False) -> dict:
+                      progress=None, exhaustive: bool = False,
+                      pcb_related: bool = False) -> dict:
     root = Path(folder).resolve(strict=True)
     manifest = root / "manifest.json"
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = ("P8-B6-sheet-faces-full-v1-20261119"
+    algorithm_version = ("P8-B7-pcb-related-v1-20261119" if pcb_related else
+                         "P8-B6-sheet-faces-full-v1-20261119"
                          if exhaustive else "P8-B6-sheet-faces-shortlist-v1-20261119")
-    rows = (_all_geometry_candidates(root) if exhaustive
-            else search_shield_candidates(root))
+    rows = (search_pcb_related_shields(root)['results'] if pcb_related else
+            _all_geometry_candidates(root) if exhaustive else search_shield_candidates(root))
     if limit is not None:
         if type(limit) is not int or limit < 1:
             raise ValueError("limit 必须为正整数")
         rows = rows[:limit]
-    cache = root / ("shield_refinement_all.json" if exhaustive
-                    else "shield_refinement.json")
+    cache = root / ("shield_refinement_pcb.json" if pcb_related else
+                    "shield_refinement_all.json" if exhaustive else "shield_refinement.json")
     previous = {}
     if cache.is_file():
         try:
@@ -299,6 +342,8 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
             else:
                 record = {"status": "PASS", "step_sha256": digest,
                           "stage1_score": row["score"], **refine_step(step)}
+            if pcb_related and record["status"] == "PASS":
+                record["pcb_shield"] = classify_pcb_shield(row, record)
             summary[record["verdict"]] += 1
         except Exception as exc:  # noqa: BLE001
             record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
@@ -323,11 +368,14 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="P8-B3 屏蔽罩两级筛选")
     parser.add_argument("folder")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--pcb-related", action="store_true",
+                        help="仅分析与主 PCB 空间关联的屏蔽罩候选")
     parser.add_argument("--exhaustive", action="store_true",
                         help="不依赖一级屏蔽罩筛选，逐一检查全部有效 Solid")
     args = parser.parse_args(argv)
     result = refine_candidates(args.folder, limit=args.limit,
                                exhaustive=args.exhaustive,
+                               pcb_related=args.pcb_related,
                                progress=lambda i, n, s: print(f"{i}/{n} {s}", flush=True)
                                if i % 20 == 0 or i == n else None)
     print(json.dumps(result, ensure_ascii=False, indent=2))
