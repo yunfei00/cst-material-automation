@@ -45,4 +45,6 @@ def test_large_nonflat_piece_does_not_override_qualified_board(tmp_path):
 
 def test_no_eligible_volume(tmp_path):
     _database(tmp_path, [("case-main-pcb:small", 100, [0, 0, 0, 10, 10, 1])])
-    assert find_main_pcb(tmp_path)["candidate"] is None
+    result = find_main_pcb(tmp_path)
+    assert result["qualified_count"] == 0
+    assert result["status"] == "NEEDS_REVIEW"
