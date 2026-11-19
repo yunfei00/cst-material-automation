@@ -10,7 +10,7 @@ import math
 def analyze_sheet_faces(solids: list, *, tolerance_mm: float = 0.03) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
-    from OCP.GeomAbs import GeomAbs_Plane, GeomAbs_Cylinder
+    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane
     from OCP.GProp import GProp_GProps
     from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
     from OCP.TopExp import TopExp_Explorer
