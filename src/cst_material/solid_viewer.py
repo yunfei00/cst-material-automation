@@ -109,6 +109,7 @@ def launch_viewer(path: str | Path) -> int:
             self.pcb_only = QCheckBox("主PCB")
             self.shield_only = QCheckBox("屏蔽罩")
             self.screw_only = QCheckBox("螺丝")
+            self.pin_only = QCheckBox("定位销")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -124,7 +125,7 @@ def launch_viewer(path: str | Path) -> int:
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
             filters = QHBoxLayout()
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only):
                 filters.addWidget(checkbox)
             left_layout.addLayout(filters)
             left_layout.addWidget(self.group_button)
@@ -233,6 +234,7 @@ def launch_viewer(path: str | Path) -> int:
             self.pcb_only.toggled.connect(self._toggle_pcb_only)
             self.shield_only.toggled.connect(self._toggle_shield_only)
             self.screw_only.toggled.connect(self._toggle_screw_only)
+            self.pin_only.toggled.connect(self._toggle_pin_only)
 
 
 
@@ -473,7 +475,7 @@ def launch_viewer(path: str | Path) -> int:
             dialog.exec()
 
         def _exclusive_filter(self, active):
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only):
                 if checkbox is active:
                     continue
                 checkbox.blockSignals(True)
@@ -490,6 +492,28 @@ def launch_viewer(path: str | Path) -> int:
                     self.refine_process = None
                 self._clear_search_results()
 
+        def _toggle_pin_only(self, checked):
+            if checked:
+                self._exclusive_filter(self.pin_only)
+                self._scan_screw_geometry()
+            else:
+                if self.refine_process is not None:
+                    self.refine_process.kill()
+                    self.refine_process = None
+                self._clear_search_results()
+
+        def _fastener_verdict(self):
+            return "LOCATING_PIN" if self.pin_only.isChecked() else "PHILLIPS_SCREW"
+
+        def _fastener_label(self):
+            return "定位销" if self.pin_only.isChecked() else "螺丝"
+
+        def _fastener_row(self, sid):
+            verdict = self._fastener_verdict()
+            return {"solid_id": sid, "verdict": verdict,
+                    "candidate_type": "PIN_CANDIDATE" if verdict == "LOCATING_PIN"
+                                      else "SCREW_CANDIDATE"}
+
         def _load_cached_screw_results(self):
             """Show a complete screw scan immediately, without starting QProcess."""
             from cst_material.phillips_screw_recognition import complete_cached_report
@@ -501,11 +525,10 @@ def launch_viewer(path: str | Path) -> int:
             if report is None:
                 return False
             rows = [
-                {"solid_id": sid, "verdict": "PHILLIPS_SCREW",
-                 "candidate_type": "SCREW_CANDIDATE"}
+                self._fastener_row(sid)
                 for sid, rec in report["results"].items()
                 if rec.get("status") == "PASS"
-                and rec.get("verdict") == "PHILLIPS_SCREW"
+                and rec.get("verdict") == self._fastener_verdict()
                 and sid in self.tree_items
             ]
             rows.sort(key=lambda row: row["solid_id"])
@@ -513,7 +536,7 @@ def launch_viewer(path: str | Path) -> int:
             self._sort_tree_by_search_results(rows)
             self._filter_tree(self.search.text())
             self.search_summary.setText(
-                f'已从缓存加载螺丝 {len(rows)} 个；'
+                f'已从缓存加载{self._fastener_label()} {len(rows)} 个；'
                 f'扫描失败 {report["summary"].get("failed", 0)} 个。'
                 '点击左侧 Solid 查看三维。'
             )
@@ -530,7 +553,7 @@ def launch_viewer(path: str | Path) -> int:
             self.refine_process = process
             self.search_results = {}
             self._filter_tree("")
-            self.search_summary.setText("正在识别螺丝；匹配的 Solid 会实时出现在左侧列表")
+            self.search_summary.setText(f"正在识别{self._fastener_label()}；匹配的 Solid 会实时出现在左侧列表")
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
             process.setArguments(["-m", "cst_material.phillips_screw_recognition", str(self.root)])
@@ -541,7 +564,7 @@ def launch_viewer(path: str | Path) -> int:
 
             def refresh():
                 nonlocal unpainted
-                if self.refine_process is not process or not self.screw_only.isChecked():
+                if self.refine_process is not process or not (self.screw_only.isChecked() or self.pin_only.isChecked()):
                     return
                 self._filter_tree(self.search.text())
                 unpainted = 0
@@ -560,23 +583,23 @@ def launch_viewer(path: str | Path) -> int:
                         continue
                     if event["event"] == "match":
                         sid = event.get("solid_id")
-                        if sid in self.tree_items and sid not in self.search_results:
+                        if (event.get("verdict") == self._fastener_verdict()
+                                and sid in self.tree_items and sid not in self.search_results):
                             self.search_results[sid] = {
-                                "solid_id": sid, "verdict": "PHILLIPS_SCREW",
-                                "candidate_type": "SCREW_CANDIDATE",
+                                **self._fastener_row(sid),
                             }
                             unpainted += 1
                     else:
                         progress_text = (
                             f'已扫描 {event.get("done", 0)}/{event.get("total", 0)}；'
-                            f'匹配 {event.get("matched", 0)}；失败 {event.get("failed", 0)}'
+                            f'匹配 {event.get("pin_matched" if self.pin_only.isChecked() else "matched", 0)}；失败 {event.get("failed", 0)}'
                         )
                         refresh()
                     if unpainted >= 10:
                         refresh()
-                if self.refine_process is process and self.screw_only.isChecked():
+                if self.refine_process is process and (self.screw_only.isChecked() or self.pin_only.isChecked()):
                     self.search_summary.setText(
-                        f"螺丝识别中：{progress_text}；左侧已显示 {len(self.search_results)} 个"
+                        f"{self._fastener_label()}识别中：{progress_text}；左侧已显示 {len(self.search_results)} 个"
                     )
 
             def finished(code, _status):
@@ -590,25 +613,24 @@ def launch_viewer(path: str | Path) -> int:
                         # completed matches remain visible even in this case.
                         pass
                     report = json.loads((self.root / "phillips_screw_recognition.json").read_text(encoding="utf-8"))
-                    if report.get("algorithm_version") != "phillips-geometry-v11":
+                    if report.get("algorithm_version") != "phillips-geometry-v12":
                         raise ValueError("螺丝结果缓存版本不匹配")
                     # Only use records from the current scan, never stale cached
                     # entries left over from a previous interrupted run.
                     rows = [
-                        {"solid_id": sid, "verdict": "PHILLIPS_SCREW",
-                         "candidate_type": "SCREW_CANDIDATE"}
+                        self._fastener_row(sid)
                         for sid, rec in report["results"].items()
                         if rec.get("status") == "PASS"
-                        and rec.get("verdict") == "PHILLIPS_SCREW"
+                        and rec.get("verdict") == self._fastener_verdict()
                         and sid in self.tree_items
                     ]
                     rows.sort(key=lambda row: row["solid_id"])
-                    if self.screw_only.isChecked():
+                    if self.screw_only.isChecked() or self.pin_only.isChecked():
                         self.search_results = {row["solid_id"]: row for row in rows}
                         self._sort_tree_by_search_results(rows)
                         self._filter_tree(self.search.text())
                     self.search_summary.setText(
-                        f'螺丝识别完成：匹配 {len(rows)} 个；'
+                        f'{self._fastener_label()}识别完成：匹配 {len(rows)} 个；'
                         f'失败 {report["summary"].get("failed", 0)} 个。'
                         '点击左侧 Solid 可查看三维。'
                     )
@@ -1010,7 +1032,7 @@ def launch_viewer(path: str | Path) -> int:
                 )
 
         def _clear_search_results(self):
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only):
                 checkbox.blockSignals(True)
                 checkbox.setChecked(False)
                 checkbox.blockSignals(False)
@@ -1099,6 +1121,10 @@ def launch_viewer(path: str | Path) -> int:
                                 1, f"屏蔽罩{label} · {row['side']} · "
                                    f"间隙 {row['gap_mm']:.3f} mm"
                             )
+                            item.setHidden(not visible)
+                            return visible
+                        if row.get("candidate_type") == "PIN_CANDIDATE":
+                            item.setText(1, "定位销 · 已匹配")
                             item.setHidden(not visible)
                             return visible
                         if row.get("candidate_type") == "SCREW_CANDIDATE":
