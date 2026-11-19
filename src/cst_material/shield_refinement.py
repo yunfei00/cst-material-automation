@@ -262,8 +262,8 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = ("P8-B5-adaptive-wall-full-v2-20261118"
-                         if exhaustive else "P8-B5-adaptive-wall-shortlist-v2-20261118")
+    algorithm_version = ("P8-B6-sheet-faces-full-v1-20261119"
+                         if exhaustive else "P8-B6-sheet-faces-shortlist-v1-20261119")
     rows = (_all_geometry_candidates(root) if exhaustive
             else search_shield_candidates(root))
     if limit is not None:
