@@ -1,5 +1,13 @@
 """Pure geometry helpers for independent screw scanning."""
-from cst_material.phillips_screw_recognition import _axis_key, _dot, _unit
+import math
+
+from cst_material.phillips_screw_recognition import (
+    _axis_key,
+    _cross_recess_profile,
+    _dot,
+    _thread_periodicity,
+    _unit,
+)
 
 
 def test_axis_is_orientation_invariant():
@@ -12,13 +20,6 @@ def test_axis_is_normalized():
     assert _unit((0, 0, 0)) is None
     assert _dot((1, 0, 0), (0, 1, 0)) == 0
 
-
-import math
-
-from cst_material.phillips_screw_recognition import (
-    _cross_recess_profile,
-    _thread_periodicity,
-)
 
 
 def test_thread_periodicity_rejects_constant_cylinder():
