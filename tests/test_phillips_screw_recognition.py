@@ -113,22 +113,20 @@ def test_common_axis_accepts_small_numeric_noise():
     assert result["verified"]
 
 
-def test_noncoaxial_geometry_is_other_even_with_thread_and_cross():
-    assert _screw_verdict(False, True, True, True, True) == "OTHER"
+def test_noncoaxial_geometry_is_other():
+    assert _screw_verdict(False, True, True) == "OTHER"
 
 
-def test_missing_head_shaft_is_other_even_when_coaxial():
-    assert _screw_verdict(True, False, True, True, True) == "OTHER"
+def test_missing_head_shaft_is_other():
+    assert _screw_verdict(True, False, True) == "OTHER"
 
 
-def test_incomplete_evidence_is_other_not_review():
-    assert _screw_verdict(True, True, True, False, True) == "OTHER"
-    assert _screw_verdict(True, True, True, True, False) == "OTHER"
-    assert _screw_verdict(True, True, False, True, True) == "OTHER"
+def test_symmetric_two_ends_are_other():
+    assert _screw_verdict(True, True, False) == "OTHER"
 
 
-def test_all_five_screw_criteria_confirmed():
-    assert _screw_verdict(True, True, True, True, True) == "PHILLIPS_SCREW"
+def test_single_head_geometry_is_confirmed_without_thread_or_cross():
+    assert _screw_verdict(True, True, True) == "PHILLIPS_SCREW"
 
 
 def _axial_points(radii):
