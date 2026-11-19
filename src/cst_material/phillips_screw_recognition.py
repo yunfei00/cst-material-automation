@@ -488,6 +488,14 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     with sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True) as connection:
         rows = connection.execute("SELECT solid_id,step FROM solids WHERE status='PASS'").fetchall()
     signature, _ = source_signature(root)
+    complete = complete_cached_report(root)
+    if complete is not None:
+        summary = complete["summary"]
+        if progress:
+            progress(len(rows), len(rows), summary)
+        return {"summary": summary,
+                "output": str(root / "phillips_screw_recognition.json"),
+                "from_cache": True}
     cache = root / "phillips_screw_recognition.json"
     results = {}
     previous = {}
