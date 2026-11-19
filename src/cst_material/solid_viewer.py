@@ -108,7 +108,7 @@ def launch_viewer(path: str | Path) -> int:
             self.find_pcb = QPushButton("定位主 PCB（最大体积）")
             self.pcb_only = QCheckBox("主PCB")
             self.shield_only = QCheckBox("屏蔽罩")
-            self.screw_only = QCheckBox("十字螺丝")
+            self.screw_only = QCheckBox("螺丝")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -499,47 +499,100 @@ def launch_viewer(path: str | Path) -> int:
             self.refine_process = process
             self.search_results = {}
             self._filter_tree("")
-            self.search_summary.setText("正在后台分析全部 Solid 的螺纹、十字槽与头杆结构")
+            self.search_summary.setText("正在识别螺丝；匹配的 Solid 会实时出现在左侧列表")
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
             process.setArguments(["-m", "cst_material.phillips_screw_recognition", str(self.root)])
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            pending = bytearray()
+            unpainted = 0
+            progress_text = "正在启动"
 
-            def finished(code, status):
-                if self.refine_process is not process:
+            def refresh():
+                nonlocal unpainted
+                if self.refine_process is not process or not self.screw_only.isChecked():
                     return
-                self.refine_process = None
-                try:
-                    report = json.loads((self.root / "phillips_screw_recognition.json").read_text(encoding="utf-8"))
-                    rows = [{"solid_id": sid, "score": rec.get("score", 0),
-                             "verdict": rec["verdict"], "candidate_type": "SCREW_CANDIDATE"}
-                            for sid, rec in report["results"].items()
-                            if rec.get("status") == "PASS"
-                            and rec.get("verdict") == "PHILLIPS_SCREW"
-                            and sid in self.tree_items]
-                    rows.sort(key=lambda r: (-r["score"], r["solid_id"]))
-                    if self.screw_only.isChecked():
-                        self.search_results = {r["solid_id"]: r for r in rows}
-                        self._sort_tree_by_search_results(rows)
-                        self._filter_tree("")
-                    self.search_summary.setText(
-                        f"十字螺丝几何匹配 {len(rows)} 个；失败 {report['summary'].get('failed', 0)} 个。"
-                        "未匹配零件不代表不是螺丝，请复核复杂曲面模型。")
-                except (OSError, ValueError, KeyError) as exc:
-                    self.search_summary.setText(f"螺丝结构扫描失败：{exc}")
+                self._filter_tree(self.search.text())
+                unpainted = 0
 
             def on_output():
-                output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
-                lines = [line.strip() for line in output.splitlines() if line.strip()]
-                if lines:
-                    self.search_summary.setText("螺丝结构扫描：" + lines[-1][:180])
+                nonlocal unpainted, progress_text
+                pending.extend(bytes(process.readAllStandardOutput()))
+                while b"\\n" in pending:
+                    raw, _, remainder = pending.partition(b"\\n")
+                    pending[:] = remainder
+                    try:
+                        event = json.loads(raw.decode("utf-8", errors="replace"))
+                    except (ValueError, TypeError):
+                        continue
+                    if not isinstance(event, dict) or event.get("event") not in ("match", "progress"):
+                        continue
+                    if event["event"] == "match":
+                        sid = event.get("solid_id")
+                        if sid in self.tree_items and sid not in self.search_results:
+                            self.search_results[sid] = {
+                                "solid_id": sid, "verdict": "PHILLIPS_SCREW",
+                                "candidate_type": "SCREW_CANDIDATE",
+                            }
+                            unpainted += 1
+                    else:
+                        progress_text = (
+                            f'已扫描 {event.get("done", 0)}/{event.get("total", 0)}；'
+                            f'匹配 {event.get("matched", 0)}；失败 {event.get("failed", 0)}'
+                        )
+                        refresh()
+                    if unpainted >= 10:
+                        refresh()
+                if self.refine_process is process and self.screw_only.isChecked():
+                    self.search_summary.setText(
+                        f"螺丝识别中：{progress_text}；左侧已显示 {len(self.search_results)} 个"
+                    )
+
+            def finished(code, _status):
+                if self.refine_process is not process:
+                    return
+                on_output()
+                self.refine_process = None
+                try:
+                    if code != 0:
+                        # Scanner may return nonzero for individual STEP failures;
+                        # completed matches remain visible even in this case.
+                        pass
+                    report = json.loads((self.root / "phillips_screw_recognition.json").read_text(encoding="utf-8"))
+                    if report.get("algorithm_version") != "phillips-geometry-v10":
+                        raise ValueError("螺丝结果缓存版本不匹配")
+                    # Only use records from the current scan, never stale cached
+                    # entries left over from a previous interrupted run.
+                    rows = [
+                        {"solid_id": sid, "verdict": "PHILLIPS_SCREW",
+                         "candidate_type": "SCREW_CANDIDATE"}
+                        for sid, rec in report["results"].items()
+                        if rec.get("status") == "PASS"
+                        and rec.get("verdict") == "PHILLIPS_SCREW"
+                        and sid in self.tree_items
+                    ]
+                    rows.sort(key=lambda row: row["solid_id"])
+                    if self.screw_only.isChecked():
+                        self.search_results = {row["solid_id"]: row for row in rows}
+                        self._sort_tree_by_search_results(rows)
+                        self._filter_tree(self.search.text())
+                    self.search_summary.setText(
+                        f'螺丝识别完成：匹配 {len(rows)} 个；'
+                        f'失败 {report["summary"].get("failed", 0)} 个。'
+                        '点击左侧 Solid 可查看三维。'
+                    )
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    refresh()
+                    self.search_summary.setText(
+                        f"螺丝扫描未正常完成：{exc}；已匹配 {len(self.search_results)} 个仍可查看"
+                    )
 
             process.readyReadStandardOutput.connect(on_output)
             process.finished.connect(finished)
             process.start()
             if not process.waitForStarted(3000):
                 self.refine_process = None
-                self.search_summary.setText("螺丝结构扫描进程启动失败")
+                self.search_summary.setText("螺丝识别进程启动失败")
 
         def _toggle_shield_only(self, checked):
             if checked:
@@ -1015,6 +1068,10 @@ def launch_viewer(path: str | Path) -> int:
                                 1, f"屏蔽罩{label} · {row['side']} · "
                                    f"间隙 {row['gap_mm']:.3f} mm"
                             )
+                            item.setHidden(not visible)
+                            return visible
+                        if row.get("candidate_type") == "SCREW_CANDIDATE":
+                            item.setText(1, "螺丝 · 已匹配")
                             item.setHidden(not visible)
                             return visible
                         similarity = row.get("similarity")
