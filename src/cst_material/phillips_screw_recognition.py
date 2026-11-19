@@ -395,7 +395,7 @@ def _locating_pin_steps(cylinders, axis, *, minimum_levels=3):
         # A full cylindrical surface has area 2*pi*r*length; a partial
         # surface gives only a lower bound. This deliberately favors precision.
         supported_length = face["area"] / (2 * math.pi * r)
-        if supported_length < max(0.15, radius * 0.12):
+        if supported_length < max(0.10, radius * 0.12):
             continue
         matching = next((level for level in levels
                          if abs(level["radius"] - r) <= radius * 0.06), None)
@@ -524,7 +524,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v12"
+        if (report.get("algorithm_version") != "phillips-geometry-v13"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -559,7 +559,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v12":
+            if old.get("algorithm_version") == "phillips-geometry-v13":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -587,7 +587,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
             progress(i, len(rows), summary, matched_id=sid, matched_verdict=record["verdict"])
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v12",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v13",
                 "summary": summary, "results": results,
                 "source_signature": signature, "complete": i == len(rows)},
                 ensure_ascii=False, indent=2), encoding="utf-8")
