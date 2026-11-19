@@ -9,6 +9,7 @@ from cst_material.phillips_screw_recognition import (
     _identify_head_shaft,
     _screw_verdict,
     _single_head_profile,
+    _solid_axis_core,
     _thread_periodicity,
     _unit,
 )
@@ -114,19 +115,19 @@ def test_common_axis_accepts_small_numeric_noise():
 
 
 def test_noncoaxial_geometry_is_other():
-    assert _screw_verdict(False, True, True) == "OTHER"
+    assert _screw_verdict(False, True, True, True) == "OTHER"
 
 
 def test_missing_head_shaft_is_other():
-    assert _screw_verdict(True, False, True) == "OTHER"
+    assert _screw_verdict(True, False, True, True) == "OTHER"
 
 
 def test_symmetric_two_ends_are_other():
-    assert _screw_verdict(True, True, False) == "OTHER"
+    assert _screw_verdict(True, True, False, True) == "OTHER"
 
 
 def test_single_head_geometry_is_confirmed_without_thread_or_cross():
-    assert _screw_verdict(True, True, True) == "PHILLIPS_SCREW"
+    assert _screw_verdict(True, True, True, True) == "PHILLIPS_SCREW"
 
 
 def _axial_points(radii):
@@ -154,3 +155,37 @@ def test_single_head_profile_rejects_uniform_rod():
     points = _axial_points([1.5] * 24)
     result = _single_head_profile(points, (1, 0, 0), (0, 0, 0), 3.0, 1.5)
     assert not result["verified"]
+
+
+def test_annular_through_hole_rejected_even_with_single_head_envelope():
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+
+    outer = BRepPrimAPI_MakeCylinder(1.5, 10.0).Shape()
+    bore = BRepPrimAPI_MakeCylinder(0.5, 10.0).Shape()
+    annulus = BRepAlgoAPI_Cut(outer, bore).Shape()
+    points = _axial_points([3.0] * 4 + [1.5] * 20)
+    profile = {"verified": True, "left_head": True}
+    result = _solid_axis_core([annulus], points, (0, 0, 1),
+                              (0, 0, 0), profile)
+    assert not result["verified"]
+    assert result["axis_core_inside"] == 0
+
+
+def test_solid_shaft_centerline_passes():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+
+    solid = BRepPrimAPI_MakeCylinder(1.5, 10.0).Shape()
+    points = [(radius * math.cos(2 * math.pi * j / 12),
+               radius * math.sin(2 * math.pi * j / 12), float(i) * 10 / 23)
+              for i, radius in enumerate([3.0] * 4 + [1.5] * 20)
+              for j in range(12)]
+    profile = {"verified": True, "left_head": True}
+    result = _solid_axis_core([solid], points, (0, 0, 1),
+                              (0, 0, 0), profile)
+    assert result["verified"]
+    assert result["axis_core_inside"] == 3
+
+
+def test_hollow_shaft_never_passes_verdict():
+    assert _screw_verdict(True, True, True, False) == "OTHER"
