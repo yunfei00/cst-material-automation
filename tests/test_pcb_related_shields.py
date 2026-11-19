@@ -10,8 +10,8 @@ def test_pcb_relative_shields(tmp_path):
         db.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, features_json TEXT, status TEXT)")
         cases = [
             ("assembly-main-pcb:MAIN PCB", [0, 0, 0, 100, 80, 1], 8000),
-            ("assembly:shielding PMU BB frame", [10, 10, 1.05, 50, 30, 2.05], 100),
-            ("assembly:unnamed hollow frame", [15, 15, 1.04, 55, 25, 2.04], 100),
+            ("assembly:shielding PMU BB frame", [10, 10, 1.05, 50, 18, 2.05], 100),
+            ("assembly:unnamed hollow frame", [15, 15, 1.04, 55, 22, 2.04], 100),
             ("assembly:shield far above", [10, 10, 20, 50, 30, 21], 100),
             ("assembly:shield far below", [10, 10, -30, 50, 30, -29], 100),
             ("assembly:shield no XY overlap", [200, 200, 1.01, 240, 220, 2.01], 100),
