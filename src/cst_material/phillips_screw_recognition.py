@@ -472,7 +472,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v10"
+        if (report.get("algorithm_version") != "phillips-geometry-v11"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -507,7 +507,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v10":
+            if old.get("algorithm_version") == "phillips-geometry-v11":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -535,7 +535,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
             progress(i, len(rows), summary, matched_id=sid)
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v10",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v11",
                 "summary": summary, "results": results,
                 "source_signature": signature, "complete": i == len(rows)},
                 ensure_ascii=False, indent=2), encoding="utf-8")
