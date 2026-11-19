@@ -526,7 +526,7 @@ def launch_viewer(path: str | Path) -> int:
                 if candidate is None:
                     self.search_results = {}
                     self._apply_pcb_visibility("__no_pcb_candidate__")
-                    self.search_summary.setText("未找到体积大于 1500 mm³ 的有效 Solid")
+                    self.search_summary.setText(f"主 PCB 定位失败：{result['reason']}；域内 {result['domain_count']} 件")
                     return
                 sid = candidate["solid_id"]
                 # Checked: show only the candidate; unchecked: locate without filtering.
@@ -544,8 +544,11 @@ def launch_viewer(path: str | Path) -> int:
                     f'主 PCB 候选：{sid}；体积 {candidate["volume_mm3"]:.1f} mm³；'
                     f'Z=[{candidate["z_min_mm"]:.3f}, {candidate["z_max_mm"]:.3f}] mm；'
                     f'厚度 {candidate["z_thickness_mm"]:.3f} mm；'
-                    f'Z 薄片校验：{"符合" if candidate["z_thin_hint"] else "不符合"}。'
-                    '仅定位候选，需确认 PCB 身份。'
+                    f'薄片比例 {candidate["z_thin_ratio"]:.4f}；'
+                    f'XY 面积 {candidate["xy_area_mm2"]:.1f} mm²；'
+                    f'域内相对面积 {candidate["relative_xy_area"]:.1%}。'
+                    f'判定：{result["reason"]}；'
+                    '仅定位候选，需人工确认 PCB 身份。'
                 )
             except Exception as exc:  # noqa: BLE001
                 self.search_summary.setText(
