@@ -262,6 +262,15 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
     }
 
 
+def _screw_verdict(coaxial: bool, stepped: bool, thread: bool, cross: bool) -> str:
+    """Noncoaxial or missing head/shaft geometry is a hard rejection."""
+    if not coaxial or not stepped:
+        return "OTHER"
+    if thread and cross:
+        return "PHILLIPS_SCREW"
+    return "SCREW_REVIEW"
+
+
 def recognize_step(path: str | Path) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
@@ -329,9 +338,9 @@ def recognize_step(path: str | Path) -> dict:
     score = (25 if shaft else 0) + (25 if stepped else 0)
     score += 25 if thread["verified"] else 0
     score += 25 if cross["verified"] else 0
-    return {"verdict": ("PHILLIPS_SCREW" if coaxial["verified"] and stepped
-                        and thread["verified"] and cross["verified"]
-                        else "SCREW_REVIEW" if coaxial["verified"] and stepped else "OTHER"),
+    return {"verdict": _screw_verdict(
+                coaxial["verified"], stepped, thread["verified"], cross["verified"]
+            ),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
