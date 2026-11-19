@@ -8,6 +8,7 @@ from cst_material.phillips_screw_recognition import (
     _dot,
     _identify_head_shaft,
     _screw_verdict,
+    _single_head_profile,
     _thread_periodicity,
     _unit,
 )
@@ -113,17 +114,45 @@ def test_common_axis_accepts_small_numeric_noise():
 
 
 def test_noncoaxial_geometry_is_other_even_with_thread_and_cross():
-    assert _screw_verdict(False, True, True, True) == "OTHER"
+    assert _screw_verdict(False, True, True, True, True) == "OTHER"
 
 
 def test_missing_head_shaft_is_other_even_when_coaxial():
-    assert _screw_verdict(True, False, True, True) == "OTHER"
+    assert _screw_verdict(True, False, True, True, True) == "OTHER"
 
 
-def test_coaxial_head_shaft_with_incomplete_evidence_is_review():
-    assert _screw_verdict(True, True, False, True) == "SCREW_REVIEW"
-    assert _screw_verdict(True, True, True, False) == "SCREW_REVIEW"
+def test_incomplete_evidence_is_other_not_review():
+    assert _screw_verdict(True, True, True, False, True) == "OTHER"
+    assert _screw_verdict(True, True, True, True, False) == "OTHER"
+    assert _screw_verdict(True, True, False, True, True) == "OTHER"
 
 
-def test_all_four_screw_criteria_confirmed():
-    assert _screw_verdict(True, True, True, True) == "PHILLIPS_SCREW"
+def test_all_five_screw_criteria_confirmed():
+    assert _screw_verdict(True, True, True, True, True) == "PHILLIPS_SCREW"
+
+
+def _axial_points(radii):
+    return [(float(i), radius * math.cos(2 * math.pi * j / 12),
+             radius * math.sin(2 * math.pi * j / 12))
+            for i, radius in enumerate(radii) for j in range(12)]
+
+
+def test_single_head_profile_accepts_one_large_end():
+    points = _axial_points([3.0] * 4 + [1.5] * 20)
+    result = _single_head_profile(points, (1, 0, 0), (0, 0, 0), 3.0, 1.5)
+    assert result["verified"]
+    assert result["left_head"]
+    assert not result["right_head"]
+
+
+def test_single_head_profile_rejects_two_equal_large_ends():
+    points = _axial_points([3.0] * 4 + [1.5] * 16 + [3.0] * 4)
+    result = _single_head_profile(points, (1, 0, 0), (0, 0, 0), 3.0, 1.5)
+    assert not result["verified"]
+    assert result["left_head"] and result["right_head"]
+
+
+def test_single_head_profile_rejects_uniform_rod():
+    points = _axial_points([1.5] * 24)
+    result = _single_head_profile(points, (1, 0, 0), (0, 0, 0), 3.0, 1.5)
+    assert not result["verified"]
