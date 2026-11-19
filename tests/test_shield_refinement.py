@@ -42,7 +42,7 @@ def test_batch_resume_and_failure(tmp_path, monkeypatch):
     assert len(calls) == 1
     saved = json.loads((tmp_path / "shield_refinement.json").read_text(encoding="utf-8"))
     assert saved["schema_version"] == 2
-    assert saved["algorithm_version"] == "P8-B5-adaptive-wall-shortlist-v2-20261118"
+    assert saved["algorithm_version"] == "P8-B6-sheet-faces-shortlist-v1-20261119"
     assert saved["results"]["b"]["status"] == "FAIL"
     assert saved["results"]["a"]["verdict"] == "REVIEW"
 
@@ -73,6 +73,7 @@ def test_refine_step_reads_step_once(monkeypatch):
 
     monkeypatch.setattr(occt_geometry, 'read_step', read)
     monkeypatch.setattr(shield_refinement, '_face_evidence', lambda solids: [])
+    monkeypatch.setattr(shield_refinement, 'analyze_sheet_faces', lambda solids: {})
     monkeypatch.setattr(shield_refinement, '_verify_wall_segments', lambda *args: {'supported': False})
     monkeypatch.setattr(shield_refinement, 'analyze_shield_solids', lambda solids: {
         'metrics': {'transverse_face_count': 0}, 'evidence': []
