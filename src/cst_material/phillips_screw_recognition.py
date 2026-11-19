@@ -364,6 +364,51 @@ def _screw_verdict(coaxial: bool, stepped: bool, profile: bool,
     return "OTHER"
 
 
+
+def _locating_pin_steps(cylinders, axis, *, minimum_levels=3):
+    """Conservative multi-diameter pin evidence from long, coaxial faces.
+
+    Small recess/fillet cylinders, short transition faces and near-equal radii
+    cannot create a distinct locating shoulder.
+    """
+    if not cylinders:
+        return {"verified": False, "levels": [], "reason": "无主体圆柱"}
+    head = max(cylinders, key=lambda face: face["radius"])
+    radius = head["radius"]
+    reference = _unit(head["direction"])
+    if reference is None:
+        return {"verified": False, "levels": [], "reason": "轴向无效"}
+    minimum = radius * 0.2
+    levels = []
+    for face in sorted(cylinders, key=lambda item: item["radius"], reverse=True):
+        r = face["radius"]
+        if r < minimum:
+            continue
+        direction = _unit(face["direction"])
+        if direction is None or math.acos(min(1.0, abs(_dot(direction, reference)))) > 0.01:
+            continue
+        delta = tuple(face["axis_origin"][i] - head["axis_origin"][i] for i in range(3))
+        projection = _dot(delta, reference)
+        offset = math.sqrt(max(0.0, _dot(delta, delta) - projection * projection))
+        if offset > 0.02:
+            continue
+        # A full cylindrical surface has area 2*pi*r*length; a partial
+        # surface gives only a lower bound. This deliberately favors precision.
+        supported_length = face["area"] / (2 * math.pi * r)
+        if supported_length < max(0.15, radius * 0.12):
+            continue
+        matching = next((level for level in levels
+                         if abs(level["radius"] - r) <= radius * 0.06), None)
+        if matching is None:
+            levels.append({"radius": r, "supported_length": supported_length})
+        else:
+            matching["supported_length"] += supported_length
+    levels.sort(key=lambda item: item["radius"], reverse=True)
+    verified = len(levels) >= minimum_levels
+    return {"verified": verified, "levels": levels,
+            "reason": "存在三个及以上稳定同轴直径段" if verified else "稳定同轴直径段不足"}
+
+
 def recognize_step(path: str | Path) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
@@ -430,10 +475,17 @@ def recognize_step(path: str | Path) -> dict:
         if profile["verified"]:
             core = _solid_axis_core(solids, points, axis, shaft["axis_origin"],
                                     profile)
-    score = 100 if coaxial["verified"] and stepped and profile["verified"] and core["verified"] else 0
-    return {"verdict": _screw_verdict(
-                coaxial["verified"], stepped, profile["verified"], core["verified"]
-            ),
+    pin = _locating_pin_steps(cylinders, axis)
+    # A stepped pin must be a solid, continuous axial body. If its geometry
+    # is ambiguous, keep OTHER rather than assigning either part category.
+    pin_verified = (coaxial["verified"] and pin["verified"]
+                    and profile["verified"] and core["verified"])
+    screw_verified = (coaxial["verified"] and stepped and profile["verified"]
+                      and core["verified"] and len(pin["levels"]) <= 2)
+    verdict = "LOCATING_PIN" if pin_verified else (
+        "PHILLIPS_SCREW" if screw_verified else "OTHER")
+    score = 100 if verdict != "OTHER" else 0
+    return {"verdict": verdict,
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
@@ -472,7 +524,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v11"
+        if (report.get("algorithm_version") != "phillips-geometry-v12"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -507,7 +559,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v11":
+            if old.get("algorithm_version") == "phillips-geometry-v12":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -531,11 +583,11 @@ def scan(folder: str | Path, *, progress=None) -> dict:
             record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
             summary["failed"] += 1
         results[sid] = record
-        if progress and record.get("status") == "PASS" and record.get("verdict") == "PHILLIPS_SCREW":
+        if progress and record.get("status") == "PASS" and record.get("verdict") in ("PHILLIPS_SCREW", "LOCATING_PIN"):
             progress(i, len(rows), summary, matched_id=sid)
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v11",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v12",
                 "summary": summary, "results": results,
                 "source_signature": signature, "complete": i == len(rows)},
                 ensure_ascii=False, indent=2), encoding="utf-8")
@@ -552,9 +604,11 @@ def main(argv=None):
     def emit(i, n, summary, *, matched_id=None):
         event = {"event": "match" if matched_id is not None else "progress",
                  "done": i, "total": n, "matched": summary.get("PHILLIPS_SCREW", 0),
-                 "failed": summary.get("failed", 0)}
+                 "failed": summary.get("failed", 0),
+                 "pin_matched": summary.get("LOCATING_PIN", 0)}
         if matched_id is not None:
             event["solid_id"] = matched_id
+            event["verdict"] = "MATCH"
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
     result = scan(args.folder, progress=emit)
