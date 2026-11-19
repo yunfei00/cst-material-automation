@@ -386,6 +386,7 @@ def launch_viewer(path: str | Path) -> int:
 
             # Background process avoids freezing the GUI on large projects.
             output = Path(tempfile.gettempdir()) / f"cst_groups_{id(self)}.json"
+            output.unlink(missing_ok=True)
             self.group_button.setEnabled(False)
             self.search_summary.setText("正在按几何特征自动分组，请稍候…")
             process = QProcess(self)
