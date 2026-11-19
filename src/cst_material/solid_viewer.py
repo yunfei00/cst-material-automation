@@ -473,7 +473,7 @@ def launch_viewer(path: str | Path) -> int:
             dialog.exec()
 
         def _exclusive_filter(self, active):
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only):
                 if checkbox is active:
                     continue
                 checkbox.blockSignals(True)
