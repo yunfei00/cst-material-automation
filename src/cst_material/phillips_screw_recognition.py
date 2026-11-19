@@ -264,14 +264,16 @@ def recognize_step(path: str | Path) -> dict:
     score = (25 if shaft else 0) + (25 if stepped else 0)
     score += 25 if thread["verified"] else 0
     score += 25 if cross["verified"] else 0
-    return {"verdict": ("PHILLIPS_SCREW" if stepped and thread["verified"] and cross["verified"]\n                        else "SCREW_REVIEW" if stepped else "OTHER"),
+    return {"verdict": ("PHILLIPS_SCREW" if stepped and thread["verified"] and cross["verified"]
+                        else "SCREW_REVIEW" if stepped else "OTHER"),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
                 thread["reason"], cross["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "head_shaft_supported": stepped,
-            "thread_verified": thread["verified"], "phillips_verified": cross["verified"],\n            "thread_evidence": thread, "cross_evidence": cross,
+            "thread_verified": thread["verified"], "phillips_verified": cross["verified"],
+            "thread_evidence": thread, "cross_evidence": cross,
             "warning": "仅同时满足头杆、螺旋周期、十字槽证据才认定为十字螺丝"}
 
 
