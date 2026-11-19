@@ -6,11 +6,11 @@ This is a conservative candidate recognizer, not proof of fastener identity.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import math
 import sqlite3
-import hashlib
 from collections import Counter
 from pathlib import Path
 
