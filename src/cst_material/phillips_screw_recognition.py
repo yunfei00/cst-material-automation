@@ -128,7 +128,10 @@ def _mesh_points(solids, *, deflection=0.035):
         BRepMesh_IncrementalMesh(solid, deflection, False, 0.15, True)
         explorer = TopExp_Explorer(solid, TopAbs_FACE)
         while explorer.More():
-            face = TopoDS.Face_s(explorer.Current())
+            downcast_face = getattr(TopoDS, "Face_s", None) or getattr(TopoDS, "Face", None)
+            if downcast_face is None:
+                raise RuntimeError("当前 OCP 版本不支持 TopoDS 面转换")
+            face = downcast_face(explorer.Current())
             location = face.Location()
             mesh = BRep_Tool.Triangulation_s(face, location)
             if mesh is not None:
