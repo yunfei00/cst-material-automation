@@ -262,13 +262,58 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
     }
 
 
-def _screw_verdict(coaxial: bool, stepped: bool, thread: bool, cross: bool) -> str:
-    """Noncoaxial or missing head/shaft geometry is a hard rejection."""
-    if not coaxial or not stepped:
-        return "OTHER"
-    if thread and cross:
+def _single_head_profile(points, axis, origin, head_radius, shaft_radius):
+    """Verify an asymmetric two-ended outer envelope, independent of face count.
+
+    Sample the outer radial envelope in axial slices. The head must occupy
+    exactly one end, while the opposite end must have shaft-sized radius.
+    An hourglass/dumbbell with two large ends is rejected.
+    """
+    direction = _unit(axis)
+    if not points or direction is None or not head_radius or not shaft_radius:
+        return {"verified": False, "reason": "端部轮廓数据不足"}
+    projected = []
+    for point in points:
+        delta = tuple(point[i] - origin[i] for i in range(3))
+        z = _dot(delta, direction)
+        radial = math.sqrt(max(0.0, _dot(delta, delta) - z * z))
+        projected.append((z, radial))
+    lo = min(z for z, _ in projected)
+    hi = max(z for z, _ in projected)
+    if hi - lo <= 1e-6:
+        return {"verified": False, "reason": "轴向长度不足"}
+    bins = 24
+    radii = [[] for _ in range(bins)]
+    for z, radius in projected:
+        index = min(bins - 1, int((z - lo) / (hi - lo) * bins))
+        radii[index].append(radius)
+    envelope = [max(values) if values else None for values in radii]
+    # Evaluate both ends over multiple slices; a single chamfered tip is not
+    # enough evidence for a third head.
+    left = [v for v in envelope[:4] if v is not None]
+    right = [v for v in envelope[-4:] if v is not None]
+    if len(left) < 2 or len(right) < 2:
+        return {"verified": False, "reason": "两端截面采样不足"}
+    large = shaft_radius + (head_radius - shaft_radius) * 0.55
+    left_large = sum(v >= large for v in left) >= 2
+    right_large = sum(v >= large for v in right) >= 2
+    verified = left_large != right_large
+    return {
+        "verified": verified,
+        "reason": "单侧大头、另一侧小杆" if verified else "两端轮廓不符合单头螺丝",
+        "left_end_max_radius": max(left),
+        "right_end_max_radius": max(right),
+        "left_head": left_large,
+        "right_head": right_large,
+    }
+
+
+def _screw_verdict(coaxial: bool, stepped: bool, profile: bool,
+                   thread: bool, cross: bool) -> str:
+    """Only positively verified single-head Phillips screws are selected."""
+    if coaxial and stepped and profile and thread and cross:
         return "PHILLIPS_SCREW"
-    return "SCREW_REVIEW"
+    return "OTHER"
 
 
 def recognize_step(path: str | Path) -> dict:
@@ -331,7 +376,12 @@ def recognize_step(path: str | Path) -> dict:
     # Missing analytic cylinders is inconclusive for spline-threaded fasteners.
     thread = {"verified": False, "reason": "无同轴头杆"}
     cross = {"verified": False, "reason": "无同轴头杆"}
-    if coaxial["verified"] and shaft is not None and head_radius is not None:
+    profile = {"verified": False, "reason": "未确认单侧大头"}
+    if coaxial["verified"] and stepped and shaft is not None and head_radius is not None:
+        profile = _single_head_profile(_mesh_points(solids), axis,
+                                       shaft["axis_origin"], head_radius,
+                                       shaft["radius"])
+    if profile["verified"]:
         thread, cross = _sample_evidence(
             solids, axis, shaft["axis_origin"], shaft["radius"], head_radius
         )
@@ -339,16 +389,19 @@ def recognize_step(path: str | Path) -> dict:
     score += 25 if thread["verified"] else 0
     score += 25 if cross["verified"] else 0
     return {"verdict": _screw_verdict(
-                coaxial["verified"], stepped, thread["verified"], cross["verified"]
+                coaxial["verified"], stepped, profile["verified"],
+                thread["verified"], cross["verified"]
             ),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
-                coaxial["reason"], thread["reason"], cross["reason"]],
+                coaxial["reason"], profile["reason"], thread["reason"], cross["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "head_shaft_supported": stepped,
             "coaxial_verified": coaxial["verified"],
             "coaxial_evidence": coaxial,
+            "single_head_verified": profile["verified"],
+            "single_head_evidence": profile,
             "head_radius": head_radius,
             "shaft_radius": shaft["radius"] if shaft else None,
             "thread_verified": thread["verified"], "phillips_verified": cross["verified"],
@@ -369,7 +422,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v7":
+            if old.get("algorithm_version") == "phillips-geometry-v8":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -393,7 +446,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         results[sid] = record
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v6",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v8",
                 "summary": summary, "results": {**previous, **results}},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
