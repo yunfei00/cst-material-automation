@@ -517,28 +517,57 @@ def launch_viewer(path: str | Path) -> int:
                     filename = 'shield_refinement_all.json' if exhaustive else 'shield_refinement.json'
                     report = json.loads((self.root / filename).read_text(encoding='utf-8'))
                     self.refinement_results = report['results']
-                    # A single geometry verdict drives both visibility and label.
-                    # REVIEW is inconclusive, not a confirmed shield.
-                    # Failed STEP analysis is never displayed as a positive result.
-                    accepted = {'REVIEW_STRONG'}
-                    visible_rows = [
-                        {'solid_id': sid, 'candidate_type': 'SHIELD_CANDIDATE',
-                         'score': 0}
-                        for sid, evidence in self.refinement_results.items()
-                        if evidence.get('status') == 'PASS'
-                        and evidence.get('verdict') in accepted
-                        and sid in self.tree_items
-                    ]
+                    # REVIEW is not a negative verdict. Keep uncertain results visible
+                    # and rank them by geometric evidence instead of hiding them.
+                    def shield_rank(evidence):
+                        thickness = evidence.get('thickness') or {}
+                        paths = evidence.get('wall_paths') or {}
+                        cross = evidence.get('cross_section') or {}
+                        brep = (evidence.get('brep') or {}).get('metrics') or {}
+                        score = 0.0
+                        score += 25.0 * min(1.0, max(0.0, float(thickness.get('pair_consistency') or 0)))
+                        score += 20.0 * min(1.0, max(0.0, float(paths.get('material_path_ratio') or 0)))
+                        score += 15.0 * min(1.0, max(0.0, float(brep.get('transverse_face_count') or 0) / 4))
+                        score += 20.0 if cross.get('wall_enclosure_hint') else 0.0
+                        cavity = brep.get('axial_cavity_probe') or {}
+                        score += 10.0 if cavity.get('axial_void') else 0.0
+                        score += 10.0 if cavity.get('open_end_hint') else 0.0
+                        return round(score, 1)
+
+                    visible_rows = []
+                    for sid, evidence in self.refinement_results.items():
+                        if sid not in self.tree_items or evidence.get('status') != 'PASS':
+                            continue
+                        verdict = evidence.get('verdict')
+                        if verdict not in ('REVIEW_STRONG', 'REVIEW'):
+                            continue
+                        visible_rows.append({
+                            'solid_id': sid, 'candidate_type': 'SHIELD_CANDIDATE',
+                            'verdict': verdict, 'score': shield_rank(evidence),
+                        })
+                    visible_rows.sort(
+                        key=lambda row: (
+                            row['verdict'] == 'REVIEW_STRONG', row['score']
+                        ), reverse=True
+                    )
                     if self.shield_only.isChecked():
                         self.search_results = {
                             row['solid_id']: row for row in visible_rows
                         }
+                        self._sort_tree_by_search_results(visible_rows)
                         self._filter_tree("")
+                    strong_count = sum(
+                        row['verdict'] == 'REVIEW_STRONG' for row in visible_rows
+                    )
+                    review_count = sum(
+                        row['verdict'] == 'REVIEW' for row in visible_rows
+                    )
                     self.search_summary.setText(
-                        f'屏蔽罩识别完成：符合严格几何条件 {len(visible_rows)} 个；'
-                        f'待确认 {report["summary"].get("REVIEW", 0)} 个；'
+                        f'屏蔽罩识别完成：严格匹配 {strong_count} 个；'
+                        f'待确认 {review_count} 个；'
                         f'无法分析 {report["summary"].get("failed", 0)} 个。'
-                        '当前仅显示严格匹配项；不自动赋材。'
+                        '已显示严格匹配和待确认结果，按几何证据排序；'
+                        '分数是排序参考，不是识别概率，不自动赋材。'
                     )
                 except (OSError, ValueError, KeyError) as exc:
                     self.search_results = {}
@@ -726,7 +755,9 @@ def launch_viewer(path: str | Path) -> int:
                             return visible
                         refined = self.refinement_results.get(rec["solid_id"])
                         if refined and refined.get("status") == "PASS" and row.get("candidate_type") == "SHIELD_CANDIDATE":
-                            item.setText(1, '屏蔽罩 · 几何匹配')
+                            label = ('严格匹配' if row.get('verdict') == 'REVIEW_STRONG'
+                                     else '待确认')
+                            item.setText(1, f"屏蔽罩{label} · 证据分 {row['score']:.1f}/100")
                             item.setHidden(not visible)
                             return visible
                         similarity = row.get("similarity")
