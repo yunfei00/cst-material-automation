@@ -28,7 +28,7 @@ from cst_material.occt_geometry import (
 )
 from cst_material.pcb_recognition import find_main_pcb
 from cst_material.shield_brep import analyze_shield_step
-from cst_material.shield_recognition import search_shield_candidates, search_pcb_related_shields
+from cst_material.shield_recognition import search_pcb_related_shields, search_shield_candidates
 from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_manifest
 from cst_material.solid_name_mapping import load_verified_mapping
 from cst_material.solid_scan import scan_grid
@@ -382,9 +382,9 @@ def launch_viewer(path: str | Path) -> int:
                 return
             if self.group_process is not None:
                 return
+            import json
             import sys
             import tempfile
-            import json
 
             # Background process avoids freezing the GUI on large projects.
             output = Path(tempfile.gettempdir()) / f"cst_groups_{id(self)}.json"
