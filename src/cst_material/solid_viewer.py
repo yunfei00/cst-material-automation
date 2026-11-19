@@ -499,7 +499,7 @@ def launch_viewer(path: str | Path) -> int:
             self.refine_process = process
             self.search_results = {}
             self._filter_tree("")
-            self.search_summary.setText("正在后台分析全部 Solid 的螺丝头杆结构（螺纹和十字槽尚未验证）")
+            self.search_summary.setText("正在后台分析全部 Solid 的螺纹、十字槽与头杆结构")
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
             process.setArguments(["-m", "cst_material.phillips_screw_recognition", str(self.root)])
@@ -515,7 +515,7 @@ def launch_viewer(path: str | Path) -> int:
                              "verdict": rec["verdict"], "candidate_type": "SCREW_CANDIDATE"}
                             for sid, rec in report["results"].items()
                             if rec.get("status") == "PASS"
-                            and rec.get("verdict") == "SCREW_REVIEW"
+                            and rec.get("verdict") == "PHILLIPS_SCREW"
                             and sid in self.tree_items]
                     rows.sort(key=lambda r: (-r["score"], r["solid_id"]))
                     if self.screw_only.isChecked():
@@ -523,8 +523,8 @@ def launch_viewer(path: str | Path) -> int:
                         self._sort_tree_by_search_results(rows)
                         self._filter_tree("")
                     self.search_summary.setText(
-                        f"头杆结构候选 {len(rows)} 个；失败 {report['summary'].get('failed', 0)} 个。"
-                        "当前尚未验证螺旋螺纹及十字槽，不能认定为十字螺丝。")
+                        f"十字螺丝几何匹配 {len(rows)} 个；失败 {report['summary'].get('failed', 0)} 个。"
+                        "未匹配零件不代表不是螺丝，请复核复杂曲面模型。")
                 except (OSError, ValueError, KeyError) as exc:
                     self.search_summary.setText(f"螺丝结构扫描失败：{exc}")
 
@@ -926,7 +926,7 @@ def launch_viewer(path: str | Path) -> int:
                 )
 
         def _clear_search_results(self):
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only):
                 checkbox.blockSignals(True)
                 checkbox.setChecked(False)
                 checkbox.blockSignals(False)
