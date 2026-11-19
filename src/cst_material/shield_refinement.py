@@ -13,9 +13,9 @@ from collections import Counter
 from pathlib import Path
 
 from cst_material.occt_geometry import sha256_file
-from cst_material.shield_brep import _dot, _face_evidence, analyze_shield_solids
-from cst_material.shield_recognition import search_shield_candidates, search_pcb_related_shields
 from cst_material.sheet_thickness import analyze_sheet_faces
+from cst_material.shield_brep import _dot, _face_evidence, analyze_shield_solids
+from cst_material.shield_recognition import search_pcb_related_shields, search_shield_candidates
 
 
 def planar_thickness_evidence(faces: list[dict]) -> dict:
