@@ -328,6 +328,10 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     results = {}
     summary = {"total": len(rows), "reused": 0, "failed": 0,
                "REVIEW_STRONG": 0, "REVIEW": 0, "LOW_EVIDENCE": 0}
+    if not rows:
+        cache.write_text(json.dumps({"schema_version": 2,
+            "algorithm_version": algorithm_version, "manifest_sha256": manifest_hash,
+            "summary": summary, "results": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
     for index, row in enumerate(rows, 1):
         sid = row["solid_id"]
         step = (root / row["step"]).resolve()
