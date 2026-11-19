@@ -220,6 +220,8 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
 
     result = module.scan(tmp_path, progress=progress)
     assert result["summary"]["PHILLIPS_SCREW"] == 1
+    assert (0, 2, None) in events
+    assert (1, 2, None) in events
     assert (1, 2, "s1") in events
     assert (2, 2, None) in events
     saved = json.loads(cache.read_text())
