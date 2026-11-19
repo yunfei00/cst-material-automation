@@ -194,6 +194,31 @@ def _sample_evidence(solids, axis, shaft_origin, shaft_radius, head_radius):
     return thread, cross
 
 
+def _identify_head_shaft(cylinders, axis, *, min_ratio=1.08):
+    """Choose the largest-radius cylinder as head, then a smaller coaxial shaft.
+
+    Never choose the smallest face as the shaft: fillets and recess walls may
+    produce tiny cylindrical faces unrelated to the main shank.
+    """
+    if not cylinders:
+        return None, None, False
+    head = max(cylinders, key=lambda item: item["radius"])
+    candidates = []
+    for candidate in cylinders:
+        if candidate is head or candidate["radius"] * min_ratio >= head["radius"]:
+            continue
+        delta = tuple(head["axis_origin"][i] - candidate["axis_origin"][i]
+                      for i in range(3))
+        axial = _dot(delta, axis)
+        radial = math.sqrt(max(0.0, _dot(delta, delta) - axial * axial))
+        if radial > max(0.15, candidate["radius"] * 0.2):
+            continue
+        candidates.append(candidate)
+    # Prefer the largest plausible shaft, not a tiny screw-hole or fillet.
+    shaft = max(candidates, key=lambda item: (item["radius"], item["area"])) if candidates else None
+    return head, shaft, shaft is not None
+
+
 def recognize_step(path: str | Path) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
@@ -247,37 +272,12 @@ def recognize_step(path: str | Path) -> dict:
             normal = plane.Axis().Direction()
             if abs(_dot((normal.X(), normal.Y(), normal.Z()), axis)) > 0.95:
                 head_planes.append({"area": area, "center": center})
-    # The threaded shaft can be spline-only and the head may be conical.
-    # Treat coaxial cylinders as positive evidence, not a mandatory gate.
-    cylinders.sort(key=lambda item: item["radius"])
-    shaft = None
-    stepped = False
-    head_radius = None
-    if cylinders:
-        # Avoid selecting the large cylindrical head as the shaft merely
-        # because its lateral area happens to be larger.
-        radii = [item["radius"] for item in cylinders]
-        shaft = min(cylinders, key=lambda item: item["radius"])
-        for candidate in cylinders:
-            if candidate["radius"] <= shaft["radius"] * 1.08:
-                continue
-            delta = tuple(candidate["axis_origin"][i] - shaft["axis_origin"][i]
-                          for i in range(3))
-            axial = _dot(delta, axis)
-            radial = math.sqrt(max(0.0, _dot(delta, delta) - axial * axial))
-            if radial <= max(0.15, shaft["radius"] * 0.2):
-                stepped = True
-                head_radius = candidate["radius"] if head_radius is None else max(
-                    head_radius, candidate["radius"]
-                )
-        if head_radius is None:
-            head_radius = max(radii)
-    # Failure to find two analytic cylindrical surfaces is not proof that a
-    # modeled screw has no head: fillets, cone heads, and true helical threads
-    # often replace those surfaces with splines.
+    head, shaft, stepped = _identify_head_shaft(cylinders, axis)
+    head_radius = head["radius"] if head else None
+    # Missing analytic cylinders is inconclusive for spline-threaded fasteners.
     thread = {"verified": False, "reason": "无同轴头杆"}
     cross = {"verified": False, "reason": "无同轴头杆"}
-    if shaft and head_radius:
+    if shaft is not None and head_radius is not None:
         thread, cross = _sample_evidence(
             solids, axis, shaft["axis_origin"], shaft["radius"], head_radius
         )
@@ -292,6 +292,8 @@ def recognize_step(path: str | Path) -> dict:
                 thread["reason"], cross["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "head_shaft_supported": stepped,
+            "head_radius": head_radius,
+            "shaft_radius": shaft["radius"] if shaft else None,
             "thread_verified": thread["verified"], "phillips_verified": cross["verified"],
             "thread_evidence": thread, "cross_evidence": cross,
             "warning": "仅同时满足头杆、螺旋周期、十字槽证据才认定为十字螺丝"}
@@ -310,7 +312,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v4":
+            if old.get("algorithm_version") == "phillips-geometry-v5":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
