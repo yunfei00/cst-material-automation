@@ -480,6 +480,8 @@ def scan(folder: str | Path, *, progress=None) -> dict:
             record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
             summary["failed"] += 1
         results[sid] = record
+        if progress and record.get("status") == "PASS" and record.get("verdict") == "PHILLIPS_SCREW":
+            progress(i, len(rows), summary, matched_id=sid)
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
             tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v10",
@@ -492,10 +494,18 @@ def scan(folder: str | Path, *, progress=None) -> dict:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="独立 STEP 十字螺丝几何识别")
+    parser = argparse.ArgumentParser(description="独立 STEP 螺丝几何识别")
     parser.add_argument("folder")
     args = parser.parse_args(argv)
-    result = scan(args.folder, progress=lambda i,n,s: print(f"{i}/{n} {dict(s)}", flush=True))
+    def emit(i, n, summary, *, matched_id=None):
+        event = {"event": "match" if matched_id is not None else "progress",
+                 "done": i, "total": n, "matched": summary.get("PHILLIPS_SCREW", 0),
+                 "failed": summary.get("failed", 0)}
+        if matched_id is not None:
+            event["solid_id"] = matched_id
+        print(json.dumps(event, ensure_ascii=False), flush=True)
+
+    result = scan(args.folder, progress=emit)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result["summary"]["failed"] else 0
 
