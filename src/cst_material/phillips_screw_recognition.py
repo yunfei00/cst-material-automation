@@ -10,6 +10,7 @@ import itertools
 import json
 import math
 import sqlite3
+import hashlib
 from collections import Counter
 from pathlib import Path
 
@@ -445,6 +446,40 @@ def recognize_step(path: str | Path) -> dict:
             "warning": "依据共轴、单侧大头和杆部实体轴心识别；贯通孔结构排除"}
 
 
+def source_signature(root: Path) -> tuple[str, int]:
+    """Fingerprint indexed STEP inputs without opening or hashing STEP files."""
+    db = root / "geometry_features.sqlite3"
+    digest = hashlib.sha256()
+    with sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True) as connection:
+        rows = connection.execute(
+            "SELECT solid_id,step,step_sha256 FROM solids WHERE status='PASS' ORDER BY solid_id"
+        ).fetchall()
+    for sid, path, sha in rows:
+        digest.update(json.dumps([sid, path, sha], ensure_ascii=False).encode("utf-8"))
+        digest.update(b"\\n")
+    return digest.hexdigest(), len(rows)
+
+
+def complete_cached_report(root: Path) -> dict | None:
+    """Return only a fully completed scan for the current indexed STEP inputs."""
+    cache = root / "phillips_screw_recognition.json"
+    if not cache.is_file():
+        return None
+    try:
+        report = json.loads(cache.read_text(encoding="utf-8"))
+        if (report.get("algorithm_version") != "phillips-geometry-v10"
+                or not report.get("complete")):
+            return None
+        signature, total = source_signature(root)
+        if (report.get("source_signature") != signature
+                or len(report.get("results", {})) != total
+                or report.get("summary", {}).get("total") != total):
+            return None
+        return report
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return None
+
+
 def scan(folder: str | Path, *, progress=None) -> dict:
     root = Path(folder).resolve(strict=True)
     db = root / "geometry_features.sqlite3"
@@ -452,6 +487,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         raise FileNotFoundError("缺少 P5 几何索引")
     with sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True) as connection:
         rows = connection.execute("SELECT solid_id,step FROM solids WHERE status='PASS'").fetchall()
+    signature, _ = source_signature(root)
     cache = root / "phillips_screw_recognition.json"
     results = {}
     previous = {}
@@ -487,7 +523,8 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
             tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v10",
-                "summary": summary, "results": results},
+                "summary": summary, "results": results,
+                "source_signature": signature, "complete": i == len(rows)},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
         if progress and (i == 1 or i % 5 == 0 or i == len(rows)):
