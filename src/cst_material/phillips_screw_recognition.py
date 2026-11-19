@@ -395,7 +395,7 @@ def _locating_pin_steps(cylinders, axis, *, minimum_levels=3):
         # A full cylindrical surface has area 2*pi*r*length; a partial
         # surface gives only a lower bound. This deliberately favors precision.
         supported_length = face["area"] / (2 * math.pi * r)
-        if supported_length < max(0.10, radius * 0.12):
+        if supported_length < 0.10:
             continue
         matching = next((level for level in levels
                          if abs(level["radius"] - r) <= radius * 0.06), None)
