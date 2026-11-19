@@ -308,9 +308,52 @@ def _single_head_profile(points, axis, origin, head_radius, shaft_radius):
     }
 
 
-def _screw_verdict(coaxial: bool, stepped: bool, profile: bool) -> str:
+def _solid_axis_core(solids, points, axis, origin, profile, *, tolerance=1e-5):
+    """Require solid material on the shaft centerline, rejecting through-hole rings.
+
+    A decorative annulus can have the same outer silhouette as a screw.
+    Testing actual B-rep solid occupancy on the shaft axis distinguishes
+    a solid shank from a coaxial through-hole without relying on mesh vertices.
+    """
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN
+
+    direction = _unit(axis)
+    if not points or direction is None or not profile["verified"]:
+        return {"verified": False, "reason": "无法确定杆部轴心"}
+    axial = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
+             for p in points]
+    low, high = min(axial), max(axial)
+    if high - low <= 1e-6:
+        return {"verified": False, "reason": "杆部轴向长度不足"}
+    # Head is at one end; test multiple positions strictly inside the
+    # opposite shaft portion, avoiding end faces, chamfers and recesses.
+    head_at_low = profile["left_head"]
+    fractions = (0.65, 0.75, 0.85)
+    sample_z = [low + (high - low) * (f if head_at_low else 1.0 - f)
+                for f in fractions]
+    inside = []
+    for z in sample_z:
+        point = gp_Pnt(*(origin[i] + z * direction[i] for i in range(3)))
+        occupied = False
+        for solid in solids:
+            classifier = BRepClass3d_SolidClassifier(solid)
+            classifier.Perform(point, tolerance)
+            if classifier.State() == TopAbs_IN:
+                occupied = True
+                break
+        inside.append(occupied)
+    verified = all(inside)
+    return {"verified": verified,
+            "reason": "杆部轴心为实体" if verified else "杆部轴心为空或存在贯通孔",
+            "axis_core_samples": len(inside), "axis_core_inside": sum(inside)}
+
+
+def _screw_verdict(coaxial: bool, stepped: bool, profile: bool,
+                   solid_core: bool) -> str:
     """Classify by coaxial, asymmetric single-head geometry alone."""
-    if coaxial and stepped and profile:
+    if coaxial and stepped and profile and solid_core:
         return "PHILLIPS_SCREW"
     return "OTHER"
 
@@ -373,27 +416,33 @@ def recognize_step(path: str | Path) -> dict:
     head, shaft, stepped = _identify_head_shaft(cylinders, axis)
     head_radius = head["radius"] if head else None
     profile = {"verified": False, "reason": "未确认单侧大头"}
+    core = {"verified": False, "reason": "未验证杆部实体轴心"}
     if coaxial["verified"] and stepped and shaft is not None and head_radius is not None:
-        profile = _single_head_profile(_mesh_points(solids), axis,
-                                       shaft["axis_origin"], head_radius,
-                                       shaft["radius"])
-    score = 100 if coaxial["verified"] and stepped and profile["verified"] else 0
+        points = _mesh_points(solids)
+        profile = _single_head_profile(points, axis, shaft["axis_origin"],
+                                       head_radius, shaft["radius"])
+        if profile["verified"]:
+            core = _solid_axis_core(solids, points, axis, shaft["axis_origin"],
+                                    profile)
+    score = 100 if coaxial["verified"] and stepped and profile["verified"] and core["verified"] else 0
     return {"verdict": _screw_verdict(
-                coaxial["verified"], stepped, profile["verified"]
+                coaxial["verified"], stepped, profile["verified"], core["verified"]
             ),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
-                coaxial["reason"], profile["reason"]],
+                coaxial["reason"], profile["reason"], core["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "head_shaft_supported": stepped,
             "coaxial_verified": coaxial["verified"],
             "coaxial_evidence": coaxial,
             "single_head_verified": profile["verified"],
             "single_head_evidence": profile,
+            "solid_axis_core_verified": core["verified"],
+            "solid_axis_core_evidence": core,
             "head_radius": head_radius,
             "shaft_radius": shaft["radius"] if shaft else None,
-            "warning": "仅依据共轴、头杆变径和单侧大头轮廓识别；不验证螺纹或十字槽"}
+            "warning": "依据共轴、单侧大头和杆部实体轴心识别；贯通孔结构排除"}
 
 
 def scan(folder: str | Path, *, progress=None) -> dict:
@@ -409,7 +458,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v9":
+            if old.get("algorithm_version") == "phillips-geometry-v10":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -433,7 +482,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         results[sid] = record
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v9",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v10",
                 "summary": summary, "results": {**previous, **results}},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
