@@ -226,3 +226,31 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     assert (2, 2, None) in events
     saved = json.loads(cache.read_text())
     assert set(saved["results"]) == {"s1", "s2"}
+
+
+def test_complete_cache_skips_rescan_and_invalidates_on_index_change(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    from cst_material import phillips_screw_recognition as module
+
+    with sqlite3.connect(tmp_path / "geometry_features.sqlite3") as db:
+        db.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, step_sha256 TEXT, status TEXT)")
+        db.execute("INSERT INTO solids VALUES ('s1', 'one.step', 'abc', 'PASS')")
+    (tmp_path / "one.step").write_text("one")
+    monkeypatch.setattr(module, "sha256_file", lambda path: "digest")
+    monkeypatch.setattr(module, "recognize_step", lambda path: {
+        "verdict": "PHILLIPS_SCREW", "score": 100,
+    })
+    module.scan(tmp_path)
+    cached = module.complete_cached_report(tmp_path)
+    assert cached is not None
+    assert cached["complete"]
+    assert cached["summary"]["total"] == 1
+    with sqlite3.connect(tmp_path / "geometry_features.sqlite3") as db:
+        db.execute("UPDATE solids SET step_sha256='changed' WHERE solid_id='s1'")
+    assert module.complete_cached_report(tmp_path) is None
+    saved = json.loads((tmp_path / "phillips_screw_recognition.json").read_text())
+    saved["complete"] = False
+    (tmp_path / "phillips_screw_recognition.json").write_text(json.dumps(saved))
+    assert module.complete_cached_report(tmp_path) is None
