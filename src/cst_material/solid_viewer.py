@@ -113,8 +113,11 @@ def launch_viewer(path: str | Path) -> int:
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
             self.scan_all_shields = QPushButton("独立识别屏蔽罩（全量几何）")
             self.refine_process = None
+            self.group_process = None
+            self.geometry_groups = None
             self.refinement_results = {}
             self.pcb_candidate_cache = None
+            self.group_button = QPushButton("Solid 自动分组")
             self.clear_results = QPushButton("显示全部")
             for button in (self.find_similar, self.clear_results):
                 search_actions.addWidget(button)
@@ -123,6 +126,7 @@ def launch_viewer(path: str | Path) -> int:
             for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
                 filters.addWidget(checkbox)
             left_layout.addLayout(filters)
+            left_layout.addWidget(self.group_button)
             threshold_row = QHBoxLayout()
             threshold_row.addWidget(QLabel("最低相似度"))
             self.similarity_cutoff = QDoubleSpinBox()
@@ -230,6 +234,7 @@ def launch_viewer(path: str | Path) -> int:
 
 
 
+            self.group_button.clicked.connect(self._start_geometry_grouping)
             self.clear_results.clicked.connect(self._clear_search_results)
             self.batch_save.clicked.connect(self._save_checked_samples)
             self.tree.currentItemChanged.connect(self._select_solid)
@@ -368,6 +373,101 @@ def launch_viewer(path: str | Path) -> int:
             finally:
                 QApplication.restoreOverrideCursor()
                 self.inspect_shield.setEnabled(True)
+
+        def _start_geometry_grouping(self):
+            if not self.root or not (self.root / "geometry_features.sqlite3").is_file():
+                self.search_summary.setText("请先完成 P5 几何特征提取")
+                return
+            if self.group_process is not None:
+                return
+            import sys
+            import tempfile
+            import json
+
+            # Background process avoids freezing the GUI on large projects.
+            output = Path(tempfile.gettempdir()) / f"cst_groups_{id(self)}.json"
+            self.group_button.setEnabled(False)
+            self.search_summary.setText("正在按几何特征自动分组，请稍候…")
+            process = QProcess(self)
+            self.group_process = process
+            process.setWorkingDirectory(str(self.root))
+            process.setProgram(sys.executable)
+            process.setArguments([
+                "-m", "cst_material.geometry_grouping", str(self.root),
+                "--output", str(output),
+            ])
+            process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+
+            def finished(exit_code, _status):
+                self.group_process = None
+                self.group_button.setEnabled(True)
+                if exit_code != 0 or not output.is_file():
+                    details = bytes(process.readAllStandardOutput()).decode(
+                        "utf-8", errors="replace"
+                    )
+                    self.search_summary.setText(f"自动分组失败：{details[-300:]}")
+                    return
+                try:
+                    self.geometry_groups = json.loads(output.read_text(encoding="utf-8"))
+                    self._show_geometry_groups()
+                except (OSError, ValueError, KeyError) as exc:
+                    self.search_summary.setText(f"分组结果读取失败：{exc}")
+                finally:
+                    output.unlink(missing_ok=True)
+
+            process.finished.connect(finished)
+            process.start()
+            if not process.waitForStarted(3000):
+                self.group_process = None
+                self.group_button.setEnabled(True)
+                self.search_summary.setText(
+                    f"自动分组进程启动失败：{process.errorString()}"
+                )
+
+        def _show_geometry_groups(self):
+            groups = self.geometry_groups
+            if not groups:
+                return
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Solid 几何自动分组（仅供人工复核）")
+            dialog.resize(850, 650)
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(QLabel(
+                f"共 {groups['total']} 个 Solid，分成 {groups['group_count']} 组。"
+                "双击成员可定位三维；几何相似不代表材料相同。"
+            ))
+            tree = QTreeWidget()
+            tree.setHeaderLabels(["分组 / Solid ID", "数量 / 与代表相似度"])
+            tree.setColumnWidth(0, 570)
+            layout.addWidget(tree)
+            for group in groups["groups"]:
+                parent = QTreeWidgetItem(tree, [
+                    f"{group['group_id']}  ·  {group['representative']}",
+                    f"{group['count']} 件",
+                ])
+                for member in group["members"]:
+                    score = member["similarity"]
+                    child = QTreeWidgetItem(parent, [
+                        member["solid_id"],
+                        "无法评分" if score is None else f"{score:.4f}",
+                    ])
+                    child.setData(0, Qt.ItemDataRole.UserRole, member["solid_id"])
+
+            def navigate(item, _column):
+                sid = item.data(0, Qt.ItemDataRole.UserRole)
+                if not sid or sid not in self.tree_items:
+                    return
+                self._clear_search_results()
+                self.tree.setCurrentItem(self.tree_items[sid])
+                self.tree.scrollToItem(self.tree_items[sid])
+                dialog.accept()
+
+            tree.itemDoubleClicked.connect(navigate)
+            self.search_summary.setText(
+                f"自动分组完成：{groups['total']} 个 Solid，"
+                f"{groups['group_count']} 组；请检查各组代表和成员。"
+            )
+            dialog.exec()
 
         def _exclusive_filter(self, active):
             for checkbox in (self.pcb_only, self.shield_only, self.spring_only):
