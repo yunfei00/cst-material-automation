@@ -73,15 +73,26 @@ def find_main_pcb(
         row for row in eligible if row["z_thin_hint"] and row["area_hint"]
         and row["volume_mm3"] > min_volume_mm3
     ]
-    # Preserve the maximum-volume candidate when it satisfies all geometry
-    # requirements. Otherwise choose the largest qualifying thin broad plate.
-    winner = qualified[0] if qualified else largest
+    # A PCB name is a tie-break priority among geometrically qualified boards,
+    # not a substitute for geometry validation. Match the Solid leaf name only:
+    # the parent component domain itself already contains "-main-pcb".
+    named_qualified = [
+        row for row in qualified
+        if "pcb" in row["solid_id"].rsplit(":", 1)[-1].casefold()
+    ]
+    winner = (named_qualified[0] if named_qualified else
+              qualified[0] if qualified else largest)
     if winner is None:
         reason = "未找到 -main-pcb 组件域" if not domain_rows else "域内没有有效几何数据"
         status = "NOT_FOUND"
     elif qualified:
-        reason = ("域内最大体积 Solid 同时满足薄片和大面积条件"
-                  if winner is largest else "最大体积 Solid 不满足条件，已选择下一块薄而大的板")
+        reason = (
+            "Solid 名称含 PCB，且满足薄片、大面积条件，优先于更大体积的其他结构"
+            if named_qualified else
+            "域内最大体积 Solid 同时满足薄片和大面积条件"
+            if winner is largest else
+            "最大体积 Solid 不满足条件，已选择下一块薄而大的板"
+        )
         status = "GEOMETRY_CANDIDATE"
     else:
         reason = "域内没有同时满足薄片、XY 面积和体积条件的 Solid，仅定位最大件供人工确认"
@@ -91,7 +102,8 @@ def find_main_pcb(
     return {
         "candidate": winner, "status": status, "reason": reason,
         "domain_count": len(domain_rows), "eligible_count": len(eligible),
-        "qualified_count": len(qualified), "scanned_count": len(rows),
+        "qualified_count": len(qualified), "named_qualified_count": len(named_qualified),
+        "scanned_count": len(rows),
         "invalid_count": invalid, "min_volume_mm3_exclusive": min_volume_mm3,
         "max_thin_ratio": max_thin_ratio,
         "min_relative_xy_area": min_relative_xy_area,
