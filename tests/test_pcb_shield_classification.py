@@ -32,3 +32,10 @@ def test_enclosed_sheet_supported():
 def test_enclosure_without_thickness_not_strong():
     result = classify_pcb_shield({"name_hit": False}, _evidence(walls=5, enclosure=True, consistency=0.2))
     assert result["verdict"] == "CONTACT_OR_OTHER"
+
+
+def test_rank_score_is_numeric_and_bounded():
+    strong = classify_pcb_shield({"name_hit": False}, _evidence(walls=5, enclosure=True))
+    contact = classify_pcb_shield({"name_hit": False}, _evidence(walls=1))
+    assert isinstance(strong["score"], (int, float))
+    assert 0 <= contact["score"] < strong["score"] <= 100
