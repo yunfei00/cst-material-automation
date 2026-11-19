@@ -252,8 +252,16 @@ def classify_pcb_shield(row: dict, evidence: dict) -> dict:
         verdict = "GEOMETRY_REVIEW"
     else:
         verdict = "CONTACT_OR_OTHER"
+    score = min(100, round(
+        25 * min(1.0, consistency) +
+        15 * min(1.0, pair_count / 3) +
+        20 * min(1.0, walls / 4) +
+        (20 if enclosure else 10 if cavity else 0) +
+        (10 if material_supported else 0) +
+        (10 if row.get("name_hit") else 0), 1))
     return {
-        "verdict": verdict, "sheet_supported": sheet_supported,
+        "verdict": verdict, "score": score,
+        "sheet_supported": sheet_supported,
         "wall_structure": wall_structure, "material_supported": material_supported,
         "face_count": sheet.get("face_count"),
         "surface_counts": counts,
@@ -305,7 +313,7 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
     if not manifest.is_file():
         raise FileNotFoundError("缺少 manifest.json")
     manifest_hash = sha256_file(manifest)
-    algorithm_version = ("P8-B7-pcb-related-v1-20261119" if pcb_related else
+    algorithm_version = ("P8-B8-pcb-scored-v1-20261119" if pcb_related else
                          "P8-B6-sheet-faces-full-v1-20261119"
                          if exhaustive else "P8-B6-sheet-faces-shortlist-v1-20261119")
     rows = (search_pcb_related_shields(root)['results'] if pcb_related else
@@ -348,10 +356,12 @@ def refine_candidates(folder: str | Path, *, limit: int | None = None,
                 record = {"status": "PASS", "step_sha256": digest,
                           "stage1_score": row.get("score", 0), **refine_step(step)}
             if pcb_related and record["status"] == "PASS":
-                record["pcb_shield"] = classify_pcb_shield(row, record)
+                detail = classify_pcb_shield(row, record)
+                record["pcb_shield"] = detail
+                record["brep_verdict"] = record["verdict"]
+                record["verdict"] = detail["verdict"]
+                record["score"] = detail["score"]
             summary[record["verdict"]] += 1
-            if pcb_related:
-                summary[record["pcb_shield"]["verdict"]] += 1
         except Exception as exc:  # noqa: BLE001
             record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
             summary["failed"] += 1
