@@ -194,6 +194,7 @@ def test_hollow_shaft_never_passes_verdict():
 def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeypatch):
     import json
     import sqlite3
+
     from cst_material import phillips_screw_recognition as module
 
     with sqlite3.connect(tmp_path / "geometry_features.sqlite3") as db:
