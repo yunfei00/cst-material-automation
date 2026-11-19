@@ -209,7 +209,10 @@ def recognize_step(path: str | Path) -> dict:
     for solid in solids:
         explorer = TopExp_Explorer(solid, TopAbs_FACE)
         while explorer.More():
-            face = TopoDS.Face_s(explorer.Current())
+            face_cast = getattr(TopoDS, 'Face_s', None) or getattr(TopoDS, 'Face', None)
+            if face_cast is None:
+                raise RuntimeError('OCP TopoDS 缺少 Face 转换接口')
+            face = face_cast(explorer.Current())
             adaptor = BRepAdaptor_Surface(face)
             kind = adaptor.GetType()
             props = GProp_GProps()
@@ -244,31 +247,45 @@ def recognize_step(path: str | Path) -> dict:
             normal = plane.Axis().Direction()
             if abs(_dot((normal.X(), normal.Y(), normal.Z()), axis)) > 0.95:
                 head_planes.append({"area": area, "center": center})
-    cylinders.sort(key=lambda c: c["radius"])
-    shaft = max(cylinders, key=lambda c: c["area"]) if cylinders else None
-    # Distinct concentric cylinders indicate head/shaft, but must share axis.
+    # The threaded shaft can be spline-only and the head may be conical.
+    # Treat coaxial cylinders as positive evidence, not a mandatory gate.
+    cylinders.sort(key=lambda item: item["radius"])
+    shaft = None
     stepped = False
-    if shaft:
-        for other in cylinders:
-            if other["radius"] < shaft["radius"] * 1.25:
+    head_radius = None
+    if cylinders:
+        # Avoid selecting the large cylindrical head as the shaft merely
+        # because its lateral area happens to be larger.
+        radii = [item["radius"] for item in cylinders]
+        shaft = min(cylinders, key=lambda item: item["radius"])
+        for candidate in cylinders:
+            if candidate["radius"] <= shaft["radius"] * 1.08:
                 continue
-            delta = tuple(other["axis_origin"][i] - shaft["axis_origin"][i] for i in range(3))
-            radial = math.sqrt(max(0, _dot(delta, delta) - _dot(delta, axis)**2))
-            if radial <= max(0.1, shaft["radius"] * 0.12):
+            delta = tuple(candidate["axis_origin"][i] - shaft["axis_origin"][i]
+                          for i in range(3))
+            axial = _dot(delta, axis)
+            radial = math.sqrt(max(0.0, _dot(delta, delta) - axial * axial))
+            if radial <= max(0.15, shaft["radius"] * 0.2):
                 stepped = True
-                break
+                head_radius = candidate["radius"] if head_radius is None else max(
+                    head_radius, candidate["radius"]
+                )
+        if head_radius is None:
+            head_radius = max(radii)
+    # Failure to find two analytic cylindrical surfaces is not proof that a
+    # modeled screw has no head: fillets, cone heads, and true helical threads
+    # often replace those surfaces with splines.
     thread = {"verified": False, "reason": "无同轴头杆"}
     cross = {"verified": False, "reason": "无同轴头杆"}
-    if stepped and shaft:
-        head_radius = max(item["radius"] for item in cylinders)
+    if shaft and head_radius:
         thread, cross = _sample_evidence(
             solids, axis, shaft["axis_origin"], shaft["radius"], head_radius
         )
     score = (25 if shaft else 0) + (25 if stepped else 0)
     score += 25 if thread["verified"] else 0
     score += 25 if cross["verified"] else 0
-    return {"verdict": ("PHILLIPS_SCREW" if stepped and thread["verified"] and cross["verified"]
-                        else "SCREW_REVIEW" if stepped else "OTHER"),
+    return {"verdict": ("PHILLIPS_SCREW" if thread["verified"] and cross["verified"]
+                        else "SCREW_REVIEW" if shaft else "OTHER"),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
@@ -293,7 +310,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v3":
+            if old.get("algorithm_version") == "phillips-geometry-v4":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
