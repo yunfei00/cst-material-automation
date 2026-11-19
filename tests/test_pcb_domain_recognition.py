@@ -38,3 +38,22 @@ def test_missing_domain_does_not_select_global_largest(tmp_path):
     result = find_main_pcb(tmp_path)
     assert result["status"] == "NOT_FOUND"
     assert result["candidate"] is None
+
+
+def test_pcb_named_board_wins_over_larger_shield_frame(tmp_path):
+    _fixture(tmp_path, [
+        ("assembly-main-pcb:shielding PMU BB frame", 120, 90, 1),
+        ("assembly-main-pcb:MAIN PCB", 90, 70, 1),
+    ])
+    result = find_main_pcb(tmp_path)
+    assert result["candidate"]["solid_id"] == "assembly-main-pcb:MAIN PCB"
+    assert result["named_qualified_count"] == 1
+
+
+def test_pcb_name_cannot_override_failed_thickness(tmp_path):
+    _fixture(tmp_path, [
+        ("assembly-main-pcb:MAIN PCB", 30, 30, 20),
+        ("assembly-main-pcb:thin plate", 80, 60, 1),
+    ])
+    result = find_main_pcb(tmp_path)
+    assert result["candidate"]["solid_id"] == "assembly-main-pcb:thin plate"
