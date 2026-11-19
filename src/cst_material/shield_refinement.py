@@ -14,6 +14,7 @@ from pathlib import Path
 from cst_material.occt_geometry import sha256_file
 from cst_material.shield_brep import _dot, _face_evidence, analyze_shield_solids
 from cst_material.shield_recognition import search_shield_candidates
+from cst_material.sheet_thickness import analyze_sheet_faces
 
 
 def planar_thickness_evidence(faces: list[dict]) -> dict:
@@ -176,6 +177,7 @@ def refine_step(path: str | Path) -> dict:
     solids = read_step(path)
     faces = _face_evidence(solids)
     thickness = planar_thickness_evidence(faces)
+    sheet_faces = analyze_sheet_faces(solids)
     wall_paths = _verify_wall_segments(solids, faces, thickness)
     shape = analyze_shield_solids(solids)
     # The old B-rep score is supporting evidence only, not a positive verdict.
@@ -213,6 +215,7 @@ def refine_step(path: str | Path) -> dict:
         verdict = "REVIEW"
     return {
         "verdict": verdict, "thickness": thickness,
+        "sheet_faces": sheet_faces,
         "wall_paths": wall_paths,
         "cross_section": enclosure,
         "brep": shape,
