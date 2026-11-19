@@ -6,6 +6,7 @@ This is a conservative candidate recognizer, not proof of fastener identity.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import sqlite3
@@ -68,7 +69,7 @@ def _thread_periodicity(samples, *, min_turns=2, bins=24):
         return {"verified": False, "turns": 0, "reason": "没有足够螺纹截面"}
     # Peak phase must move coherently, not randomly jump between angular bins.
     steps = []
-    for (_, previous), (_, current) in zip(profiles, profiles[1:]):
+    for (_, previous), (_, current) in itertools.pairwise(profiles):
         delta = ((current - previous + bins / 2) % bins) - bins / 2
         if delta:
             steps.append(delta)
@@ -264,8 +265,8 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
 def recognize_step(path: str | Path) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
+    from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Plane
     from OCP.GProp import GProp_GProps
-    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Plane
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
@@ -377,7 +378,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
             else:
                 record = {"status": "PASS", "sha256": digest, **recognize_step(path)}
             summary[record["verdict"]] += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate malformed individual STEP solids
             record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
             summary["failed"] += 1
         results[sid] = record
