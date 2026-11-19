@@ -222,12 +222,12 @@ def _identify_head_shaft(cylinders, axis, *, min_ratio=1.08):
 
 
 def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
-                           radial_tolerance=0.02):
+                           radial_tolerance=0.02, min_radius_ratio=0.2):
     """Check actual 3D axis lines, not merely parallel directions.
 
     Angular tolerance is in radians; radial tolerance is in model units (mm).
-    Every cylindrical face must share the head's axis line. A parallel
-    displaced hole/cylinder is therefore rejected.
+    Ignore tiny cylindrical faces below 20% of head radius (recess/fillets).
+    All remaining structural cylinders must share the head axis line.
     """
     if not cylinders:
         return {"verified": False, "reason": "无圆柱面", "checked": 0}
@@ -235,10 +235,13 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
     reference = _unit(head["direction"])
     if reference is None:
         return {"verified": False, "reason": "头部轴向无效", "checked": 0}
+    minimum_radius = head['radius'] * min_radius_ratio
+    structural = [(index, candidate) for index, candidate in enumerate(cylinders)
+                  if candidate['radius'] >= minimum_radius]
     failures = []
     max_angle = 0.0
     max_offset = 0.0
-    for index, candidate in enumerate(cylinders):
+    for index, candidate in structural:
         direction = _unit(candidate["direction"])
         if direction is None:
             failures.append(index)
@@ -255,8 +258,10 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
             failures.append(index)
     return {
         "verified": not failures,
-        "reason": "所有圆柱面共轴" if not failures else "存在偏轴或倾斜圆柱面",
-        "checked": len(cylinders),
+        "reason": "主体圆柱面共轴" if not failures else "主体存在偏轴或倾斜圆柱面",
+        "checked": len(structural),
+        "ignored_small_cylinders": len(cylinders) - len(structural),
+        "minimum_radius": round(minimum_radius, 6),
         "failed_indices": failures,
         "max_angle_deg": round(math.degrees(max_angle), 5),
         "max_offset_mm": round(max_offset, 6),
