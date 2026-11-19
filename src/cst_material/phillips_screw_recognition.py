@@ -33,6 +33,89 @@ def _axis_key(direction):
     return tuple(round(x, 2) for x in u)
 
 
+
+def _thread_periodicity(samples, *, min_turns=2, bins=24):
+    """Check that radius maxima advance in angle as axial position increases.
+
+    samples: (axial coordinate, angle radians, radius) on shaft surface.
+    A mere circular cylinder has no axial radius modulation and is rejected.
+    """
+    if len(samples) < 80:
+        return {"verified": False, "turns": 0, "reason": "螺纹采样不足"}
+    zmin = min(p[0] for p in samples)
+    zmax = max(p[0] for p in samples)
+    span = zmax - zmin
+    if span <= 1e-6:
+        return {"verified": False, "turns": 0, "reason": "轴向范围不足"}
+    # Compute mean radii on an axial/azimuth grid and find a diagonal ridge.
+    nz = 96
+    sums = [[0.0] * bins for _ in range(nz)]
+    counts = [[0] * bins for _ in range(nz)]
+    for z, angle, radius in samples:
+        i = min(nz - 1, int((z - zmin) / span * nz))
+        j = int((angle % (2 * math.pi)) / (2 * math.pi) * bins) % bins
+        sums[i][j] += radius
+        counts[i][j] += 1
+    # Sparse, nonuniform CAD tessellation cannot prove a thread.
+    populated = sum(bool(counts[i][j]) for i in range(nz) for j in range(bins))
+    if populated < nz * bins * 0.35:
+        return {"verified": False, "turns": 0, "reason": "螺纹网格覆盖不足"}
+    profiles = []
+    for i in range(nz):
+        observed = [(j, sums[i][j] / counts[i][j])
+                    for j in range(bins) if counts[i][j]]
+        if len(observed) < bins * 0.6:
+            continue
+        values = [v for _, v in observed]
+        if max(values) - min(values) < max(0.015, sum(values) / len(values) * 0.012):
+            continue
+        profiles.append((i, max(observed, key=lambda p: p[1])[0]))
+    if len(profiles) < 30:
+        return {"verified": False, "turns": 0, "reason": "没有明显的螺旋牙形"}
+    # Unwrap the peak angle and require persistent directional rotation.
+    total = 0.0
+    coherent = 0
+    last = profiles[0][1]
+    for _, current in profiles[1:]:
+        step = ((current - last + bins / 2) % bins) - bins / 2
+        if step:
+            total += step
+            coherent += 1
+        last = current
+    turns = abs(total) / bins
+    return {"verified": turns >= min_turns and coherent >= 15,
+            "turns": round(turns, 2), "reason": "螺旋周期证据" if turns >= min_turns else "未观察到足够螺旋圈数"}
+
+
+def _cross_recess_profile(points, *, head_radius):
+    """Conservative cross-slot check on planar head-face interior points.
+
+    Input is local head-plane coordinates (x, y, recess_depth). A Phillips
+    recess has four radial arms, plus a deeper central intersection.
+    """
+    if len(points) < 40 or head_radius <= 0:
+        return {"verified": False, "reason": "头部凹槽采样不足"}
+    deep = [(x, y) for x, y, depth in points
+            if depth > head_radius * 0.025
+            and head_radius * 0.08 < math.hypot(x, y) < head_radius * 0.85]
+    if len(deep) < 20:
+        return {"verified": False, "reason": "未检测到凹槽"}
+    # Angle-independent detection: rotate cross candidate through 0..90 deg.
+    angles = [math.atan2(y, x) % (2 * math.pi) for x, y in deep]
+    best = 0
+    for k in range(45):
+        rotation = k * math.pi / 90
+        arms = [0, 0, 0, 0]
+        for angle in angles:
+            relative = (angle - rotation) % (2 * math.pi)
+            arm = round(relative / (math.pi / 2)) % 4
+            distance = abs((relative - arm * math.pi / 2 + math.pi) % (2 * math.pi) - math.pi)
+            if distance < 0.16:
+                arms[arm] += 1
+        best = max(best, min(arms))
+    return {"verified": best >= 4, "arm_min_support": best,
+            "reason": "四向十字凹槽证据" if best >= 4 else "凹槽缺少四向支持"}
+
 def recognize_step(path: str | Path) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
@@ -123,7 +206,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v1":
+            if old.get("algorithm_version") == "phillips-geometry-v2":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
