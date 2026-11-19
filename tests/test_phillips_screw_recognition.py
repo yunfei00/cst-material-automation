@@ -3,6 +3,7 @@ import math
 
 from cst_material.phillips_screw_recognition import (
     _axis_key,
+    _common_axis_cylinders,
     _cross_recess_profile,
     _dot,
     _identify_head_shaft,
@@ -67,3 +68,44 @@ def test_head_shaft_rejects_noncoaxial_cylinder():
     assert head["radius"] == 3.0
     assert shaft is None
     assert not supported
+
+
+def _cylinder(radius, origin, direction=(0.0, 0.0, 1.0)):
+    return {"radius": radius, "area": 10.0,
+            "axis_origin": origin, "direction": direction}
+
+
+def test_all_cylinders_on_same_axis_line():
+    cylinders = [
+        _cylinder(3.0, (0.0, 0.0, 0.0)),
+        _cylinder(2.0, (0.0, 0.0, 5.0)),
+        _cylinder(1.8, (0.0, 0.0, -3.0), (0.0, 0.0, -1.0)),
+    ]
+    result = _common_axis_cylinders(cylinders)
+    assert result["verified"]
+    assert result["checked"] == 3
+
+
+def test_parallel_offset_cylinder_fails_common_axis():
+    result = _common_axis_cylinders([
+        _cylinder(3.0, (0.0, 0.0, 0.0)),
+        _cylinder(2.0, (0.2, 0.0, 4.0)),
+    ])
+    assert not result["verified"]
+    assert result["failed_indices"] == [1]
+
+
+def test_tilted_cylinder_fails_common_axis():
+    result = _common_axis_cylinders([
+        _cylinder(3.0, (0.0, 0.0, 0.0)),
+        _cylinder(2.0, (0.0, 0.0, 4.0), (0.1, 0.0, 0.995)),
+    ])
+    assert not result["verified"]
+
+
+def test_common_axis_accepts_small_numeric_noise():
+    result = _common_axis_cylinders([
+        _cylinder(3.0, (0.0, 0.0, 0.0)),
+        _cylinder(2.0, (0.001, 0.0, 4.0)),
+    ])
+    assert result["verified"]
