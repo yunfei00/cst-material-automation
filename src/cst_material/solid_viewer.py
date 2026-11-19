@@ -28,7 +28,7 @@ from cst_material.occt_geometry import (
 )
 from cst_material.pcb_recognition import find_main_pcb
 from cst_material.shield_brep import analyze_shield_step
-from cst_material.shield_recognition import search_shield_candidates
+from cst_material.shield_recognition import search_shield_candidates, search_pcb_related_shields
 from cst_material.solid_index import ensure_preview_mesh, load_catalog, load_manifest
 from cst_material.solid_name_mapping import load_verified_mapping
 from cst_material.solid_scan import scan_grid
@@ -481,7 +481,7 @@ def launch_viewer(path: str | Path) -> int:
         def _toggle_shield_only(self, checked):
             if checked:
                 self._exclusive_filter(self.shield_only)
-                self._scan_all_shield_geometry()
+                self._find_pcb_related_shields()
             else:
                 if self.refine_process is not None:
                     process = self.refine_process
@@ -553,6 +553,37 @@ def launch_viewer(path: str | Path) -> int:
             except Exception as exc:  # noqa: BLE001
                 self.search_summary.setText(
                     f'PCB 定位失败：{type(exc).__name__}: {exc}'
+                )
+
+        def _find_pcb_related_shields(self):
+            if not self.root:
+                self.search_summary.setText("请先打开 P5 几何特征目录")
+                return
+            try:
+                report = search_pcb_related_shields(self.root)
+                rows = report["results"]
+                self.refinement_results = {}
+                self.search_results = {row["solid_id"]: row for row in rows}
+                self.search.blockSignals(True)
+                self.search.clear()
+                self.search.blockSignals(False)
+                self._sort_tree_by_search_results(rows)
+                self._filter_tree("")
+                counts = report["counts"]
+                if not report["pcb"]["candidate"]:
+                    self.search_summary.setText(report["warning"])
+                else:
+                    self.search_summary.setText(
+                        f"PCB 关联筛选：XY 重叠 {counts['xy_overlap']} 件；"
+                        f"Z 贴近 {counts['z_near']} 件；"
+                        f"名称命中 {counts['named']} 件；"
+                        f"粗几何支持 {counts['geometry_supported']} 件；"
+                        f"最终候选 {len(rows)} 件（含疑似）。"
+                        "低填充率不等于真实空腔，均需人工复核。"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                self.search_summary.setText(
+                    f"PCB 关联屏蔽罩筛选失败：{type(exc).__name__}: {exc}"
                 )
 
         def _find_shield_candidates(self):
@@ -862,6 +893,20 @@ def launch_viewer(path: str | Path) -> int:
                             label = ('严格匹配' if row.get('verdict') == 'REVIEW_STRONG'
                                      else '待确认')
                             item.setText(1, f"屏蔽罩{label} · 证据分 {row['score']:.1f}/100")
+                            item.setHidden(not visible)
+                            return visible
+                        if row.get("verdict") in (
+                            "NAMED_GEOMETRY", "NAMED_REVIEW", "GEOMETRY_REVIEW"
+                        ):
+                            label = {
+                                "NAMED_GEOMETRY": "名称+几何候选",
+                                "NAMED_REVIEW": "名称命中·待确认",
+                                "GEOMETRY_REVIEW": "无名称·几何疑似",
+                            }[row["verdict"]]
+                            item.setText(
+                                1, f"屏蔽罩{label} · {row['side']} · "
+                                   f"间隙 {row['gap_mm']:.3f} mm"
+                            )
                             item.setHidden(not visible)
                             return visible
                         similarity = row.get("similarity")
