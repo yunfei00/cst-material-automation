@@ -198,8 +198,8 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     from cst_material import phillips_screw_recognition as module
 
     with sqlite3.connect(tmp_path / "geometry_features.sqlite3") as db:
-        db.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, status TEXT)")
-        db.executemany("INSERT INTO solids VALUES (?, ?, 'PASS')",
+        db.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, step_sha256 TEXT, status TEXT)")
+        db.executemany("INSERT INTO solids (solid_id, step, status) VALUES (?, ?, 'PASS')",
                        [("s1", "one.step"), ("s2", "two.step")])
     (tmp_path / "one.step").write_text("one")
     (tmp_path / "two.step").write_text("two")
