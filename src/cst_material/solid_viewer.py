@@ -490,8 +490,39 @@ def launch_viewer(path: str | Path) -> int:
                     self.refine_process = None
                 self._clear_search_results()
 
+        def _load_cached_screw_results(self):
+            """Show a complete screw scan immediately, without starting QProcess."""
+            from cst_material.phillips_screw_recognition import complete_cached_report
+
+            try:
+                report = complete_cached_report(self.root)
+            except (OSError, ValueError):
+                return False
+            if report is None:
+                return False
+            rows = [
+                {"solid_id": sid, "verdict": "PHILLIPS_SCREW",
+                 "candidate_type": "SCREW_CANDIDATE"}
+                for sid, rec in report["results"].items()
+                if rec.get("status") == "PASS"
+                and rec.get("verdict") == "PHILLIPS_SCREW"
+                and sid in self.tree_items
+            ]
+            rows.sort(key=lambda row: row["solid_id"])
+            self.search_results = {row["solid_id"]: row for row in rows}
+            self._sort_tree_by_search_results(rows)
+            self._filter_tree(self.search.text())
+            self.search_summary.setText(
+                f'已从缓存加载螺丝 {len(rows)} 个；'
+                f'扫描失败 {report["summary"].get("failed", 0)} 个。'
+                '点击左侧 Solid 查看三维。'
+            )
+            return True
+
         def _scan_screw_geometry(self):
             if not self.root or self.refine_process is not None:
+                return
+            if self._load_cached_screw_results():
                 return
             import json
             import sys
