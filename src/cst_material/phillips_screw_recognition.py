@@ -219,6 +219,48 @@ def _identify_head_shaft(cylinders, axis, *, min_ratio=1.08):
     return head, shaft, shaft is not None
 
 
+def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
+                           radial_tolerance=0.02):
+    """Check actual 3D axis lines, not merely parallel directions.
+
+    Angular tolerance is in radians; radial tolerance is in model units (mm).
+    Every cylindrical face must share the head's axis line. A parallel
+    displaced hole/cylinder is therefore rejected.
+    """
+    if not cylinders:
+        return {"verified": False, "reason": "无圆柱面", "checked": 0}
+    head = max(cylinders, key=lambda item: item["radius"])
+    reference = _unit(head["direction"])
+    if reference is None:
+        return {"verified": False, "reason": "头部轴向无效", "checked": 0}
+    failures = []
+    max_angle = 0.0
+    max_offset = 0.0
+    for index, candidate in enumerate(cylinders):
+        direction = _unit(candidate["direction"])
+        if direction is None:
+            failures.append(index)
+            continue
+        cosine = min(1.0, abs(_dot(reference, direction)))
+        angle = math.acos(cosine)
+        delta = tuple(candidate["axis_origin"][i] - head["axis_origin"][i]
+                      for i in range(3))
+        projection = _dot(delta, reference)
+        offset = math.sqrt(max(0.0, _dot(delta, delta) - projection * projection))
+        max_angle = max(max_angle, angle)
+        max_offset = max(max_offset, offset)
+        if angle > angular_tolerance or offset > radial_tolerance:
+            failures.append(index)
+    return {
+        "verified": not failures,
+        "reason": "所有圆柱面共轴" if not failures else "存在偏轴或倾斜圆柱面",
+        "checked": len(cylinders),
+        "failed_indices": failures,
+        "max_angle_deg": round(math.degrees(max_angle), 5),
+        "max_offset_mm": round(max_offset, 6),
+    }
+
+
 def recognize_step(path: str | Path) -> dict:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
@@ -263,35 +305,40 @@ def recognize_step(path: str | Path) -> dict:
             cylinder = adaptor.Cylinder()
             direction = cylinder.Axis().Direction()
             key = _axis_key((direction.X(), direction.Y(), direction.Z()))
-            if key and abs(_dot(key, axis)) > 0.98:
+            if key:
                 origin = cylinder.Axis().Location()
                 cylinders.append({"radius": cylinder.Radius(), "area": area,
+                                  "direction": (direction.X(), direction.Y(), direction.Z()),
                                   "axis_origin": (origin.X(), origin.Y(), origin.Z())})
         elif kind == GeomAbs_Plane:
             plane = adaptor.Plane()
             normal = plane.Axis().Direction()
             if abs(_dot((normal.X(), normal.Y(), normal.Z()), axis)) > 0.95:
                 head_planes.append({"area": area, "center": center})
+    coaxial = _common_axis_cylinders(cylinders)
     head, shaft, stepped = _identify_head_shaft(cylinders, axis)
     head_radius = head["radius"] if head else None
     # Missing analytic cylinders is inconclusive for spline-threaded fasteners.
     thread = {"verified": False, "reason": "无同轴头杆"}
     cross = {"verified": False, "reason": "无同轴头杆"}
-    if shaft is not None and head_radius is not None:
+    if coaxial["verified"] and shaft is not None and head_radius is not None:
         thread, cross = _sample_evidence(
             solids, axis, shaft["axis_origin"], shaft["radius"], head_radius
         )
     score = (25 if shaft else 0) + (25 if stepped else 0)
     score += 25 if thread["verified"] else 0
     score += 25 if cross["verified"] else 0
-    return {"verdict": ("PHILLIPS_SCREW" if thread["verified"] and cross["verified"]
+    return {"verdict": ("PHILLIPS_SCREW" if coaxial["verified"] and stepped
+                        and thread["verified"] and cross["verified"]
                         else "SCREW_REVIEW" if shaft else "OTHER"),
             "score": score, "evidence": [
                 f"同轴圆柱面 {len(cylinders)} 个",
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
-                thread["reason"], cross["reason"]],
+                coaxial["reason"], thread["reason"], cross["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "head_shaft_supported": stepped,
+            "coaxial_verified": coaxial["verified"],
+            "coaxial_evidence": coaxial,
             "head_radius": head_radius,
             "shaft_radius": shaft["radius"] if shaft else None,
             "thread_verified": thread["verified"], "phillips_verified": cross["verified"],
@@ -312,7 +359,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v5":
+            if old.get("algorithm_version") == "phillips-geometry-v6":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -336,7 +383,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         results[sid] = record
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v3",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v6",
                 "summary": summary, "results": {**previous, **results}},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
