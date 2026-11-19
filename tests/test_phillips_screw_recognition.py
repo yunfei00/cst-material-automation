@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v10",
+        "algorithm_version": "phillips-geometry-v11",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -260,3 +260,28 @@ def test_complete_cache_skips_rescan_and_invalidates_on_index_change(tmp_path, m
     saved["complete"] = False
     (tmp_path / "phillips_screw_recognition.json").write_text(json.dumps(saved))
     assert module.complete_cached_report(tmp_path) is None
+
+
+def test_tiny_offset_recess_cylinder_does_not_fail_common_axis():
+    cylinders = [
+        _cylinder(3.0, (0.0, 0.0, 0.0)),
+        _cylinder(1.5, (0.0, 0.0, 5.0)),
+        _cylinder(0.3, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+    ]
+    result = _common_axis_cylinders(cylinders)
+    assert result["verified"]
+    assert result["checked"] == 2
+    assert result["ignored_small_cylinders"] == 1
+    assert result["minimum_radius"] == 0.6
+
+
+def test_structural_offset_cylinder_still_fails_common_axis():
+    cylinders = [
+        _cylinder(3.0, (0.0, 0.0, 0.0)),
+        _cylinder(1.5, (0.0, 0.0, 5.0)),
+        _cylinder(0.7, (1.0, 0.0, 0.0)),
+    ]
+    result = _common_axis_cylinders(cylinders)
+    assert not result["verified"]
+    assert result["failed_indices"] == [2]
+    assert result["ignored_small_cylinders"] == 0
