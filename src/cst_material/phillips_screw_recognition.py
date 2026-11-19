@@ -463,6 +463,8 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         except (OSError, ValueError, TypeError):
             pass
     summary = Counter({"total": len(rows), "failed": 0, "reused": 0})
+    if progress:
+        progress(0, len(rows), summary)
     for i, (sid, relpath) in enumerate(rows, 1):
         try:
             path = (root / relpath).resolve()
@@ -488,7 +490,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
                 "summary": summary, "results": results},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(cache)
-        if progress and (i % 20 == 0 or i == len(rows)):
+        if progress and (i == 1 or i % 5 == 0 or i == len(rows)):
             progress(i, len(rows), summary)
     return {"summary": dict(summary), "output": str(cache)}
 
