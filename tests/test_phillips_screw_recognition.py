@@ -189,3 +189,37 @@ def test_solid_shaft_centerline_passes():
 
 def test_hollow_shaft_never_passes_verdict():
     assert _screw_verdict(True, True, True, False) == "OTHER"
+
+
+def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+    from cst_material import phillips_screw_recognition as module
+
+    with sqlite3.connect(tmp_path / "geometry_features.sqlite3") as db:
+        db.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, status TEXT)")
+        db.executemany("INSERT INTO solids VALUES (?, ?, 'PASS')",
+                       [("s1", "one.step"), ("s2", "two.step")])
+    (tmp_path / "one.step").write_text("one")
+    (tmp_path / "two.step").write_text("two")
+    cache = tmp_path / "phillips_screw_recognition.json"
+    cache.write_text(json.dumps({
+        "algorithm_version": "phillips-geometry-v10",
+        "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
+    }))
+    monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
+    monkeypatch.setattr(module, "recognize_step", lambda path: {
+        "verdict": "PHILLIPS_SCREW" if path.name == "one.step" else "OTHER",
+        "score": 100 if path.name == "one.step" else 0,
+    })
+    events = []
+
+    def progress(done, total, summary, *, matched_id=None):
+        events.append((done, total, matched_id))
+
+    result = module.scan(tmp_path, progress=progress)
+    assert result["summary"]["PHILLIPS_SCREW"] == 1
+    assert (1, 2, "s1") in events
+    assert (2, 2, None) in events
+    saved = json.loads(cache.read_text())
+    assert set(saved["results"]) == {"s1", "s2"}
