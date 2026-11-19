@@ -684,12 +684,13 @@ def launch_viewer(path: str | Path) -> int:
                             if evidence.get("status") != "PASS":
                                 continue
                             detail = evidence.get("pcb_shield") or {}
-                            verdict = detail.get("verdict", "CONTACT_OR_OTHER")
+                            verdict = evidence.get("verdict", detail.get("verdict", "CONTACT_OR_OTHER"))
                             stats[verdict] = stats.get(verdict, 0) + 1
                             if verdict == "CONTACT_OR_OTHER":
                                 continue
                             visible_rows.append({
                                 **by_id[sid], "verdict": verdict,
+                                "score": float(evidence.get("score", detail.get("score", 0)) or 0),
                                 "face_count": detail.get("face_count"),
                                 "surface_counts": detail.get("surface_counts"),
                                 "dominant_thickness_mm": detail.get("dominant_thickness_mm"),
@@ -698,7 +699,7 @@ def launch_viewer(path: str | Path) -> int:
                         visible_rows.sort(key=lambda r: (
                             {"SHIELD_REVIEW_STRONG": 0, "NAMED_REVIEW": 1,
                              "GEOMETRY_REVIEW": 2}.get(r["verdict"], 3),
-                            r["gap_mm"], r["solid_id"]))
+                            -r["score"], r["gap_mm"], r["solid_id"]))
                         if self.shield_only.isChecked():
                             self.search_results = {r["solid_id"]: r for r in visible_rows}
                             self._sort_tree_by_search_results(visible_rows)
