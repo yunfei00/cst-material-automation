@@ -518,8 +518,8 @@ def launch_viewer(path: str | Path) -> int:
             def on_output():
                 nonlocal unpainted, progress_text
                 pending.extend(bytes(process.readAllStandardOutput()))
-                while b"\\n" in pending:
-                    raw, _, remainder = pending.partition(b"\\n")
+                while b"\n" in pending:
+                    raw, _, remainder = pending.partition(b"\n")
                     pending[:] = remainder
                     try:
                         event = json.loads(raw.decode("utf-8", errors="replace"))
