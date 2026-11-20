@@ -443,8 +443,8 @@ def _thread_surface_evidence(solids, axis, origin, shaft_radius, profile, *,
                 first, last = curve.FirstParameter(), curve.LastParameter()
                 if not all(math.isfinite(t) for t in (first, last)) or last <= first:
                     continue
-                for j in range(33):
-                    point = curve.Value(first + (last - first) * j / 32)
+                for j in range(129):
+                    point = curve.Value(first + (last - first) * j / 128)
                     delta = (point.X() - origin[0], point.Y() - origin[1],
                              point.Z() - origin[2])
                     z = _dot(delta, direction)
@@ -481,9 +481,10 @@ def _thread_phase_consistency(profiles, helix_points, axis, origin, *, tolerance
     if phase_shift <= tolerance:
         return {"verified": False, "reason": "没有轴向螺旋推进"}
     matched = 0
-    axial_positions = []
     for index, teeth in enumerate(profiles):
-        theta = index * math.pi / len(profiles)
+        # A section plane is specified by its NORMAL, so its radial rays
+        # are at normal angle + pi/2 (modulo pi).
+        theta = index * math.pi / len(profiles) + math.pi / 2
         # Both half-planes intersect the same axial meridian.
         intersections = []
         for k in range(-16, 17):
@@ -500,11 +501,61 @@ def _thread_phase_consistency(profiles, helix_points, axis, origin, *, tolerance
                 found.append(z)
         if found:
             matched += 1
-            axial_positions.append(found[0])
     return {"verified": matched == len(profiles),
             "matched_sections": matched, "section_count": len(profiles),
             "reason": ("螺旋边与多角度截面相位吻合" if matched == len(profiles)
                        else "螺旋边与截面牙型相位不一致")}
+
+
+def _thread_tooth_flanks(profiles, helix_points, axis, origin, pitch, *,
+                         tolerance=0.02):
+    """Require tooth crest/root relief and two flanks near the helix trace.
+
+    Measurements are local to the helix axial interval. A plain cylinder,
+    head shoulder or isolated circumferential groove cannot satisfy the
+    repeated rising/falling flank condition.
+    """
+    direction = _unit(axis)
+    if direction is None or pitch <= tolerance or len(profiles) < 3:
+        return {"verified": False, "reason": "螺距或截面数据不足"}
+    zs = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
+          for p in helix_points]
+    if not zs:
+        return {"verified": False, "reason": "螺旋线无采样"}
+    lo, hi = min(zs), max(zs)
+    accepted = 0
+    details = []
+    for section in profiles:
+        # Each section is a cloud from the two opposing half-planes; sort by
+        # axial position and remove exact duplicates before looking at relief.
+        data = sorted(set((round(z, 5), round(r, 5)) for z, r in section
+                          if lo <= z <= hi and r > tolerance))
+        if len(data) < 12:
+            continue
+        # Repeated tooth geometry must exist at multiple distinct axial
+        # intervals; a single shoulder is not a threaded surface.
+        windows = []
+        start = lo
+        while start + pitch <= hi + tolerance:
+            local = [(z, r) for z, r in data if start <= z < start + pitch]
+            if len(local) >= 5:
+                radii = [r for _, r in local]
+                relief = max(radii) - min(radii)
+                if relief > tolerance:
+                    mid = (max(radii) + min(radii)) / 2
+                    signs = [1 if r > mid else -1 for _, r in local]
+                    crossings = sum(a != b for a, b in itertools.pairwise(signs))
+                    if crossings >= 2:
+                        windows.append(relief)
+            start += pitch
+        if len(windows) >= 2:
+            accepted += 1
+            details.append({"turns_with_flanks": len(windows),
+                            "min_relief_mm": round(min(windows), 5)})
+    return {"verified": accepted >= 3, "sections_with_teeth": accepted,
+            "section_details": details,
+            "reason": ("多圈牙顶牙底及双侧牙侧变化" if accepted >= 3
+                       else "未确认多圈重复牙型及双侧牙侧")}
 
 
 def _helix_on_shaft(points, axis, origin, profile, mesh_points, *, tolerance=0.02):
@@ -657,11 +708,15 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
             if not phase["verified"]:
                 continue
+            teeth = _thread_tooth_flanks(section["profiles"], points, axis, origin,
+                                        evidence["pitch_mm"])
+            if not teeth["verified"]:
+                continue
             material = _external_thread_material(solids, points, axis, origin)
             if not material["verified"]:
                 continue
             return {**evidence, "verified": True, "edges_examined": examined,
-                    "material_evidence": material,
+                    "material_evidence": material, "tooth_evidence": teeth,
                     "phase_evidence": phase, "section_count": section["sections"],
                     "method": "brep_helix_and_meridian_teeth"}
     return {"verified": False, "edges_examined": examined,
@@ -837,7 +892,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v21"
+        if (report.get("algorithm_version") != "phillips-geometry-v22"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -895,7 +950,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v21":
+            if old.get("algorithm_version") == "phillips-geometry-v22":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -908,7 +963,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v21",
+            "algorithm_version": "phillips-geometry-v22",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
