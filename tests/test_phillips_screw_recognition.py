@@ -218,7 +218,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     def progress(done, total, summary, *, matched_id=None, matched_verdict=None):
         events.append((done, total, matched_id))
 
-    result = module.scan(tmp_path, progress=progress)
+    result = module.scan(tmp_path, progress=progress, workers=1)
     assert result["summary"]["PHILLIPS_SCREW"] == 1
     assert (0, 2, None) in events
     assert (1, 2, None) in events
