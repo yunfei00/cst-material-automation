@@ -15,7 +15,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
-from cst_material.phillips_screw_recognition import recommended_workers, source_signature
+from cst_material.phillips_screw_recognition import source_signature
 
 VERSION = "battery-geometry-v1"
 
