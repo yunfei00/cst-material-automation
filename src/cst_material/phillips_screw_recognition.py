@@ -365,6 +365,76 @@ def _screw_verdict(coaxial: bool, stepped: bool, profile: bool,
 
 
 
+
+def _helix_from_curve_points(points, axis, origin, shaft_radius):
+    """Verify a sampled B-rep edge is a constant-pitch helix on the shaft."""
+    direction = _unit(axis)
+    if direction is None or len(points) < 24 or shaft_radius <= 0:
+        return {"verified": False, "reason": "螺旋边采样不足"}
+    u, v = _basis(direction)
+    angles, heights, radii = [], [], []
+    for point in points:
+        delta = tuple(point[i] - origin[i] for i in range(3))
+        z = _dot(delta, direction)
+        x, y = _dot(delta, u), _dot(delta, v)
+        radii.append(math.hypot(x, y))
+        heights.append(z)
+        angle = math.atan2(y, x)
+        if angles:
+            angle += 2 * math.pi * round((angles[-1] - angle) / (2 * math.pi))
+        angles.append(angle)
+    turns = abs(angles[-1] - angles[0]) / (2 * math.pi)
+    mean_r = sum(radii) / len(radii)
+    if (turns < 1.75 or not 0.55 * shaft_radius <= mean_r <= 1.45 * shaft_radius
+            or max(radii) - min(radii) > max(0.02, mean_r * 0.08)):
+        return {"verified": False, "turns": round(turns, 2),
+                "reason": "不满足杆部恒半径多圈螺旋"}
+    mean_a = sum(angles) / len(angles)
+    mean_z = sum(heights) / len(heights)
+    denominator = sum((a - mean_a) ** 2 for a in angles)
+    if denominator < 1e-8:
+        return {"verified": False, "reason": "螺旋角变化不足"}
+    slope = sum((a - mean_a) * (z - mean_z) for a, z in zip(angles, heights)) / denominator
+    pitch = abs(slope) * 2 * math.pi
+    residual = math.sqrt(sum((z - mean_z - slope * (a - mean_a)) ** 2
+                             for a, z in zip(angles, heights)) / len(heights))
+    verified = pitch > 0.02 and residual < max(0.02, pitch * 0.08)
+    return {"verified": verified, "turns": round(turns, 2),
+            "pitch_mm": round(pitch, 5), "residual_mm": round(residual, 5),
+            "reason": "B-rep 恒导程螺旋边" if verified else "螺距拟合不稳定"}
+
+
+def _brep_thread_evidence(solids, axis, origin, shaft_radius):
+    """Sample actual STEP edges, not a visually inferred mesh spiral."""
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    examined = 0
+    for solid in solids:
+        explorer = TopExp_Explorer(solid, TopAbs_EDGE)
+        while explorer.More():
+            edge_cast = getattr(TopoDS, "Edge_s", None) or getattr(TopoDS, "Edge", None)
+            if edge_cast is None:
+                raise RuntimeError("当前 OCP 不支持 Edge 转换")
+            curve = BRepAdaptor_Curve(edge_cast(explorer.Current()))
+            first, last = curve.FirstParameter(), curve.LastParameter()
+            explorer.Next()
+            if not math.isfinite(first) or not math.isfinite(last) or last <= first:
+                continue
+            examined += 1
+            points = []
+            for i in range(97):
+                p = curve.Value(first + (last - first) * i / 96)
+                points.append((p.X(), p.Y(), p.Z()))
+            evidence = _helix_from_curve_points(points, axis, origin, shaft_radius)
+            if evidence["verified"]:
+                return {**evidence, "edges_examined": examined, "method": "brep_edge"}
+    return {"verified": False, "edges_examined": examined,
+            "reason": "未发现连续恒导程螺旋边", "method": "brep_edge"}
+
+
 def _locating_pin_steps(cylinders, axis, *, minimum_levels=3):
     """Conservative multi-diameter pin evidence from long, coaxial faces.
 
@@ -476,14 +546,19 @@ def recognize_step(path: str | Path) -> dict:
             core = _solid_axis_core(solids, points, axis, shaft["axis_origin"],
                                     profile)
     pin = _locating_pin_steps(cylinders, axis)
-    # A stepped pin must be a solid, continuous axial body. If its geometry
-    # is ambiguous, keep OTHER rather than assigning either part category.
-    pin_verified = (coaxial["verified"] and pin["verified"]
-                    and profile["verified"] and core["verified"])
-    screw_verified = (coaxial["verified"] and stepped and profile["verified"]
-                      and core["verified"] and len(pin["levels"]) <= 2)
-    verdict = "LOCATING_PIN" if pin_verified else (
-        "PHILLIPS_SCREW" if screw_verified else "OTHER")
+    thread = {"verified": False, "reason": "未满足头杆实体结构"}
+    structural = coaxial["verified"] and stepped and profile["verified"] and core["verified"]
+    if structural:
+        thread = _brep_thread_evidence(solids, axis, shaft["axis_origin"], shaft["radius"])
+    # A thread is positive screw evidence even for multi-shoulder screws.
+    # A smooth two-level pin is ambiguous and must NOT default to screw.
+    if structural and thread["verified"]:
+        verdict = "PHILLIPS_SCREW"
+    elif structural and pin["verified"]:
+        verdict = "LOCATING_PIN"
+    else:
+        verdict = "OTHER"
+    pin_verified = verdict == "LOCATING_PIN"
     score = 100 if verdict != "OTHER" else 0
     return {"verdict": verdict,
             "score": score, "evidence": [
@@ -500,7 +575,7 @@ def recognize_step(path: str | Path) -> dict:
             "solid_axis_core_evidence": core,
             "head_radius": head_radius,
             "shaft_radius": shaft["radius"] if shaft else None,
-            "warning": "依据共轴、单侧大头和杆部实体轴心识别；贯通孔结构排除"}
+            "warning": "仅明确螺旋边确认螺丝；多台阶无螺纹确认定位销；证据不足不分类"}
 
 
 def source_signature(root: Path) -> tuple[str, int]:
@@ -524,7 +599,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v13"
+        if (report.get("algorithm_version") != "phillips-geometry-v14"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -559,7 +634,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v13":
+            if old.get("algorithm_version") == "phillips-geometry-v14":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -587,7 +662,7 @@ def scan(folder: str | Path, *, progress=None) -> dict:
             progress(i, len(rows), summary, matched_id=sid, matched_verdict=record["verdict"])
         if i % 20 == 0 or i == len(rows):
             tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v13",
+            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v14",
                 "summary": summary, "results": results,
                 "source_signature": signature, "complete": i == len(rows)},
                 ensure_ascii=False, indent=2), encoding="utf-8")
