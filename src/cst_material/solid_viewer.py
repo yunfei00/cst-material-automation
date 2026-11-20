@@ -565,7 +565,9 @@ def launch_viewer(path: str | Path) -> int:
                         continue
                     if not isinstance(event, dict):
                         continue
-                    if event.get("event") == "match" and self.battery_only.isChecked():
+                    if event.get("event") == "phase" and self.battery_only.isChecked():
+                        self.search_summary.setText(event.get("message", "正在准备识别"))
+                    elif event.get("event") == "match" and self.battery_only.isChecked():
                         sid = event.get("solid_id")
                         if sid in self.tree_items:
                             self.search_results[sid] = {
