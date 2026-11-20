@@ -392,10 +392,11 @@ def _helix_from_curve_points(points, axis, origin, shaft_radius, *, head_radius=
         angles.append(angle)
     turns = abs(angles[-1] - angles[0]) / (2 * math.pi)
     mean_r = sum(radii) / len(radii)
-    if head_radius is not None:
-        if head_radius <= shaft_radius or max(radii) >= (head_radius + shaft_radius) / 2:
-            return {"verified": False, "turns": round(turns, 2),
-                    "reason": "螺旋半径位于头部或大直径筒体，非杆部螺纹"}
+    if (head_radius is not None
+            and (head_radius <= shaft_radius
+                 or max(radii) >= (head_radius + shaft_radius) / 2)):
+        return {"verified": False, "turns": round(turns, 2),
+                "reason": "螺旋半径位于头部或大直径筒体，非杆部螺纹"}
     # A true helix on a large lens barrel is not a screw-shaft helix.
     # The upper bound is halfway between the independently measured head
     # cylinder and the nominal shaft cylinder; do not compare to the root
