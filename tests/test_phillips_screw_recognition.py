@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v17",
+        "algorithm_version": "phillips-geometry-v18",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -378,3 +378,25 @@ def test_head_shaft_accepts_small_but_distinct_radius_step():
     _, shaft, verified = _identify_head_shaft(cylinders, (0, 0, 1))
     assert verified
     assert shaft["radius"] == 1.9
+
+
+def test_thread_phase_rejects_stationary_ring():
+    from cst_material.phillips_screw_recognition import _thread_phase_consistency
+
+    points = [(2 * math.cos(t), 2 * math.sin(t), 0.0)
+              for t in [4 * math.pi * i / 96 for i in range(97)]]
+    sections = [[(0.0, 2.0)]] * 4
+    assert not _thread_phase_consistency(
+        sections, points, (0, 0, 1), (0, 0, 0),
+    )["verified"]
+
+
+def test_thread_phase_rejects_unrelated_sections():
+    from cst_material.phillips_screw_recognition import _thread_phase_consistency
+
+    points = [(2 * math.cos(t), 2 * math.sin(t), t / (2 * math.pi))
+              for t in [4 * math.pi * i / 96 for i in range(97)]]
+    sections = [[(10.0, 2.0), (11.0, 1.5)]] * 4
+    assert not _thread_phase_consistency(
+        sections, points, (0, 0, 1), (0, 0, 0),
+    )["verified"]
