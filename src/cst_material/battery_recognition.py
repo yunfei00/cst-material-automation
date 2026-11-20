@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v4"
+VERSION = "battery-geometry-v5"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -37,7 +37,7 @@ def shape_verdict(*, volume, dimensions, fill, solid_count=1):
     return "BATTERY_SHAPE"
 
 
-def _oriented_dimensions(solids):
+def _oriented_dimensions(solids, *, with_normal=False):
     """Find a stable body orientation from principal axes of tessellated vertices.
 
     Mesh vertices are used only for direction; exact B-rep volume is authoritative.
@@ -75,13 +75,17 @@ def _oriented_dimensions(solids):
     dims = (projected.max(axis=0) - projected.min(axis=0)).tolist()
     if not all(math.isfinite(v) and v > 0 for v in dims):
         raise ValueError("退化的旋转包围盒")
-    return sorted((float(x) for x in dims), reverse=True)
+    ordered = sorted((float(x) for x in dims), reverse=True)
+    if with_normal:
+        normal = basis[int(np.argmin(dims))].tolist()
+        return ordered, [float(v) for v in normal]
+    return ordered
 
 
 def recognize_step(path: Path) -> dict:
     solids = read_step(path)
     metrics = geometry_metrics(solids)
-    dimensions = _oriented_dimensions(solids)
+    dimensions, normal = _oriented_dimensions(solids, with_normal=True)
     volume = float(metrics["volume_mm3"])
     box_volume = math.prod(dimensions)
     fill = volume / box_volume if box_volume > 0 else 0.0
@@ -91,6 +95,8 @@ def recognize_step(path: Path) -> dict:
         "verdict": verdict,
         "volume_mm3": volume,
         "obb_dimensions_mm": dimensions,
+        "bbox_mm": metrics["bbox_mm"],
+        "plane_normal": normal,
         "length_width_ratio": dimensions[0] / dimensions[1],
         "flatness": dimensions[2] / math.sqrt(dimensions[0] * dimensions[1]),
         "fill_ratio": fill,
@@ -99,6 +105,43 @@ def recognize_step(path: Path) -> dict:
         "reason": ("扁平、较高填充率的长方体几何形态；不能仅凭形状确认电池"
                    if verdict == "BATTERY_SHAPE" else "不满足保守板状实体几何条件"),
     }
+
+
+def compatible_pair(first, second):
+    """Require neighboring, similarly thick, coplanar separate packages.
+
+    A second plausible rectangle alone is not sufficient evidence of two cells.
+    """
+    try:
+        a, b = first["obb_dimensions_mm"], second["obb_dimensions_mm"]
+        na, nb = first["plane_normal"], second["plane_normal"]
+        ba, bb = first["bbox_mm"], second["bbox_mm"]
+        if any(len(v) != n for v, n in ((a, 3), (b, 3), (na, 3),
+                                        (nb, 3), (ba, 6), (bb, 6))):
+            return False
+        values = [*a, *b, *na, *nb, *ba, *bb]
+        if not all(math.isfinite(float(v)) for v in values):
+            return False
+        if min(a[2], b[2]) <= 0 or max(a[2], b[2]) / min(a[2], b[2]) > 1.35:
+            return False
+        dot = abs(sum(x * y for x, y in zip(na, nb)))
+        if dot < 0.97:
+            return False
+        ca = [(ba[i] + ba[i + 3]) / 2 for i in range(3)]
+        cb = [(bb[i] + bb[i + 3]) / 2 for i in range(3)]
+        delta = [cb[i] - ca[i] for i in range(3)]
+        normal_offset = abs(sum(delta[i] * na[i] for i in range(3)))
+        if normal_offset > max(a[2], b[2]) * 1.5:
+            return False
+        gaps = [max(0.0, ba[i] - bb[i + 3], bb[i] - ba[i + 3])
+                for i in range(3)]
+        distance = math.sqrt(sum(g * g for g in gaps))
+        if distance > 0.20 * min(a[0], b[0]):
+            return False
+        center_distance = math.sqrt(sum(v * v for v in delta))
+        return center_distance >= 0.20 * min(a[1], b[1])
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return False
 
 
 def _one(task):
@@ -201,7 +244,7 @@ def scan(folder, *, workers=1, progress=None):
         except Exception as exc:  # noqa: BLE001
             accept(sid, {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"})
     if progress:
-        progress({"event": "phase", "message": f"正在并行精查 {len(tasks)} 个 STEP",
+        progress({"event": "phase", "message": f"正在顺序精查 {len(tasks)} 个 STEP",
                   "done": len(results), "total": limit})
     count = 1
     for task in tasks:
@@ -215,14 +258,23 @@ def scan(folder, *, workers=1, progress=None):
                 -abs(float(rec.get("flatness", 0)) - 0.10),
                 float(rec.get("volume_mm3", 0)), sid)
     winner = max(matches, key=geometry_key)[0] if matches else None
+    selected = {winner} if winner else set()
+    if winner:
+        partner = [item for item in matches if item[0] != winner
+                   and compatible_pair(results[winner], item[1])]
+        if partner:
+            selected.add(max(partner, key=geometry_key)[0])
     for sid, rec in matches:
-        if sid != winner:
+        if sid not in selected:
             rec["verdict"] = "OTHER"
-            rec["reason"] = "形态相符，但不是最佳电池形态匹配"
-    summary["matched"] = int(winner is not None)
-    if winner and progress:
-        progress({"event": "match", "solid_id": winner, "verdict": "BATTERY_SHAPE",
-                  "done": len(results), "total": limit})
+            rec["reason"] = "几何形态相符，但缺少与已识别电芯的可靠成组关系"
+    summary["matched"] = len(selected)
+    summary["cell_configuration"] = ("dual" if len(selected) == 2 else
+                                     "single" if selected else "unknown")
+    for sid in sorted(selected):
+        if progress:
+            progress({"event": "match", "solid_id": sid, "verdict": "BATTERY_SHAPE",
+                      "done": len(results), "total": limit})
     save(True)
     return {"summary": dict(summary), "output": str(cache), "workers": count}
 
