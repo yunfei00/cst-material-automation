@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v20",
+        "algorithm_version": "phillips-geometry-v21",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -418,3 +418,32 @@ def test_thread_on_head_rejected_by_axial_envelope():
     profile = {"verified": True, "left_head": True}
     assert not _helix_on_shaft(head_thread, (0, 0, 1), (0, 0, 0), profile, mesh)
     assert _helix_on_shaft(shaft_thread, (0, 0, 1), (0, 0, 0), profile, mesh)
+
+
+def test_external_material_on_cylinder_surface():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+
+    from cst_material.phillips_screw_recognition import _external_thread_material
+
+    solid = BRepPrimAPI_MakeCylinder(2.0, 8.0).Shape()
+    points = [(2 * math.cos(i * 0.2), 2 * math.sin(i * 0.2), 4.0)
+              for i in range(32)]
+    result = _external_thread_material([solid], points, (0, 0, 1), (0, 0, 0))
+    assert result["verified"]
+    assert result["internal_samples"] == 0
+
+
+def test_internal_material_on_hollow_tube():
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+
+    from cst_material.phillips_screw_recognition import _external_thread_material
+
+    outer = BRepPrimAPI_MakeCylinder(4.0, 8.0).Shape()
+    bore = BRepPrimAPI_MakeCylinder(2.0, 8.0).Shape()
+    hollow = BRepAlgoAPI_Cut(outer, bore).Shape()
+    points = [(2 * math.cos(i * 0.2), 2 * math.sin(i * 0.2), 4.0)
+              for i in range(32)]
+    result = _external_thread_material([hollow], points, (0, 0, 1), (0, 0, 0))
+    assert not result["verified"]
+    assert result["internal_samples"] > 0
