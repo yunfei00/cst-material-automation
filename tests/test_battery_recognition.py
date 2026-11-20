@@ -94,11 +94,11 @@ def test_top_ten_and_single_result_without_spatial_evidence(tmp_path, monkeypatc
     monkeypatch.setattr(battery, "_one", fake)
     events = []
     result = battery.scan(tmp_path, workers=1, progress=events.append)
-    assert len(called) == 10
-    assert any(e.get("event") == "progress" and e.get("total") == 10 for e in events)
+    assert len(called) == 15
+    assert any(e.get("event") == "progress" and e.get("total") == 15 for e in events)
     assert result["summary"]["matched"] == 1
     report = json.loads((tmp_path / "battery_recognition.json").read_text(encoding="utf-8"))
-    assert len(report["results"]) == 10
+    assert len(report["results"]) == 15
     assert sum(rec.get("verdict") == "BATTERY_SHAPE"
                for rec in report["results"].values()) == 1
 
