@@ -531,8 +531,12 @@ def launch_viewer(path: str | Path) -> int:
                     self.search_results = {row["solid_id"]: row for row in rows}
                     self._sort_tree_by_search_results(rows)
                     self._filter_tree(self.search.text())
+                configuration = report["summary"].get("cell_configuration", "unknown")
+                label = {"single": "单电芯", "dual": "双电芯"}.get(
+                    configuration, "未识别")
                 self.search_summary.setText(
-                    f'电池形态匹配 {len(rows)} 个；失败 {report["summary"].get("failed", 0)} 个。'
+                    f'电池识别：{label}，匹配 {len(rows)} 个 Solid；'
+                    f'失败 {report["summary"].get("failed", 0)} 个。'
                     '仅凭几何不能确认电池身份或自动赋材。')
             process = QProcess(self)
             self.refine_process = process
