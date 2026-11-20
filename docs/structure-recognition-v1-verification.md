@@ -18,9 +18,9 @@
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
-git switch feat/solid-structure-recognition-v1
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换分支失败' }
-git pull --ff-only origin feat/solid-structure-recognition-v1
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw 'git pull 失败' }
 uv sync --group dev --extra viewer
 if ($LASTEXITCODE -ne 0) { throw '依赖安装失败' }

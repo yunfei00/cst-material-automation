@@ -12,8 +12,8 @@
 
 ```powershell
 git fetch origin
-git switch feat/geometry-library
-git pull --ff-only origin feat/geometry-library
+git switch main
+git pull --ff-only origin main
 uv sync --extra viewer
 
 # 改为你的实际全量 STEP 导出目录

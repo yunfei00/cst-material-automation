@@ -10,10 +10,10 @@ CST 2025 SP1 已验证 `STEP.Write("Component:Solid")` 可导出单个 Solid。*
 
 ## 结构识别 V1（零件类别，不涉及材料）
 
-当前开发分支：`feat/solid-structure-recognition-v1`。已增加本地已确认结构样本库、几何特征提取、相似样本 Top-5 检索及 PySide6 人工确认入口。**安装、实机验收、反馈模板与 CI 验收记录请以 [结构识别 V1 验收文档](docs/structure-recognition-v1-verification.md) 为准。**
+当前 `main` 已包含本地已确认结构样本库、几何特征提取、相似样本 Top-5 检索及 PySide6 人工确认入口。**安装、实机验收、反馈模板与 CI 验收记录请以 [结构识别 V1 验收文档](docs/structure-recognition-v1-verification.md) 为准。**
 
 
-## M1–M5 集成开发分支（2026-11-13）
+## M1–M5 集成功能
 
 **面向最终产品**：输入一个 CST 工程，生成几何缓存、分析 Solid 身份、匹配获批准材料并保存新的 CST 工程；另提供 PySide6/VTK 离线三维查看器。
 
@@ -86,6 +86,6 @@ CST 2025 完整 Online Help 已确认三维 VBA 官方接口：`Solid.GetNumberO
 - 默认不会上传任何原始工程、材料、几何数据或本地日志到 GitHub。
 - 对于有外部依赖或结果目录的 CST 工程，单个 `.cst` 文件复制是否足够需要在本机确认。
 - 已删除旧版冗余环境探测脚本，不再让工程师重复测试 CST/Python 是否安装。
-- P4-A 使用独立分支 `feat/cst-p4a-structure-features`，基于 P3-D 已验证的代码；不自动合并 `main`，不会修改 P1/P2/P3-A/B 与 P3-C 的工程操作流程。
+- P4-A 已合并到 `main`；结构候选保持离线只读，不修改 P1/P2/P3-A/B 与 P3-C 的工程操作流程。
 
-见 [研发路线图](docs/roadmap.md) 和 [架构设计](docs/architecture.md)。
+见 [架构设计](docs/architecture.md)。

@@ -9,7 +9,7 @@ from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 from OCP.IFSelect import IFSelect_ReturnStatus
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 
-from check_point import check_point, classify_point, load_solid
+from cst_material.check_point import check_point, classify_point, load_solid
 
 
 def _make_sample_step(tmp_path):

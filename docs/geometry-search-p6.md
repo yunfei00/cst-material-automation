@@ -13,8 +13,8 @@
 在仓库根目录运行，将目录替换为你的实际路径：
 
 ```powershell
-git switch feat/geometry-library
-git pull --ff-only origin feat/geometry-library
+git switch main
+git pull --ff-only origin main
 $GeometryDir = "D:\CST\Original.solid_export_diagnostic"
 
 # 方法一：按已知 Solid 的完整原始名称，查找几何最相似的 30 个 Solid

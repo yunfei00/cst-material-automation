@@ -18,9 +18,9 @@
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw '获取分支失败' }
-git switch feat/cst-p3-geometry-catalog
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换分支失败' }
-git pull --ff-only origin feat/cst-p3-geometry-catalog
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw '更新分支失败' }
 $env:PYTHONPATH = Join-Path (Get-Location) 'src'
 

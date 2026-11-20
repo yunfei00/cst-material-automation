@@ -1,6 +1,6 @@
 # P3-D：7,311 个 Solid 的分批邻近分析（2026-11-12）
 
-> 本功能在 `fix/p3c-win32-lock-diagnosis`（用户确认 P3-C 实机运行通过）基础上新增。优先离线读取之前的 P3-C 报告，**不重新打开 CST**。单元测试使用公开可分享的合成数据；公司工程、空间坐标和本机结果不得上传公共 GitHub。
+> 本功能基于已合并到 `main` 的 P3-C 锁诊断能力（用户确认实机运行通过）。优先离线读取之前的 P3-C 报告，**不重新打开 CST**。单元测试使用公开可分享的合成数据；公司工程、空间坐标和本机结果不得上传公共 GitHub。
 
 ## 本轮解决的问题
 
@@ -19,9 +19,9 @@
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
-git switch feat/cst-p3d-large-neighbors
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换 P3-D 分支失败' }
-git pull --ff-only origin feat/cst-p3d-large-neighbors
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw '拉取 P3-D 分支失败' }
 $env:PYTHONPATH = Join-Path (Get-Location) 'src'
 

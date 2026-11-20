@@ -66,9 +66,9 @@ P3-A 返回 `volume_project_unit3`、`area_project_unit2` 和 `zero_volume`。�
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
-git switch feat/cst-p4-structure-cleanup
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换分支失败' }
-git pull --ff-only origin feat/cst-p4-structure-cleanup
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw '更新分支失败' }
 
 $env:PYTHONPATH = Join-Path (Get-Location) 'src'
@@ -113,9 +113,9 @@ CLI 只输出摘要，详情留在本机 JSON；**即使没有其他规则文件
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
-git switch feat/cst-p4-structure-cleanup
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换分支失败' }
-git pull --ff-only origin feat/cst-p4-structure-cleanup
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw '更新分支失败' }
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\cleanup_r001.ps1

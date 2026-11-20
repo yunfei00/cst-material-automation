@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 _spec = importlib.util.spec_from_file_location(
-    "cst_ten_solid_script", Path(__file__).resolve().parents[1] / "test_single_solid_step_10.py"
+    "cst_ten_solid_script", Path(__file__).resolve().parents[1] / "export_ten_solids.py"
 )
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)

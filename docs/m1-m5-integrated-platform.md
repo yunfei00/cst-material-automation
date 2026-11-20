@@ -1,6 +1,6 @@
 # CST Solid 自动识别与赋材平台：M1–M5 集成说明
 
-> 2026-11-13 开发分支。自动化/合成 CAD 测试 ≠ 客户公司真实 CST 2025 验收。公司模型、BOM、材料和本地日志不可上传 GitHub。
+> 功能已合并到 `main`。自动化/合成 CAD 测试 ≠ 客户公司真实 CST 2025 验收。公司模型、BOM、材料和本地日志不可上传 GitHub。
 
 ## A. 当前产品入口：两个文件路径
 
@@ -10,9 +10,9 @@
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
-git switch feat/cst-m1-m5-platform
+git switch main
 if ($LASTEXITCODE -ne 0) { throw 'git switch 失败' }
-git pull --ff-only origin feat/cst-m1-m5-platform
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw 'git pull 失败' }
 
 # 安装 OCP 精确几何 + PySide6/VTK 三维 GUI 的可选依赖
@@ -121,8 +121,8 @@ M3 的单 Solid STEP VBA 导出仍是**有文档依据的实现候选**，没有
 直接拉取更新代码并打开原来已经生成的目录即可：
 
 ```powershell
-git switch feat/cst-m1-m5-platform
-git pull --ff-only origin feat/cst-m1-m5-platform
+git switch main
+git pull --ff-only origin main
 uv sync --group dev --extra viewer
 uv run --extra viewer python view_solids.py "D:\CST\Completed.geometry"
 ```

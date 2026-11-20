@@ -5,8 +5,8 @@
 Windows PowerShell（仓库根目录）：
 
 ```powershell
-git switch feat/geometry-library
-git pull --ff-only origin feat/geometry-library
+git switch main
+git pull --ff-only origin main
 $dir = 'D:\CST\Original.solid_export_diagnostic'
 uv run --extra viewer python -m cst_material.shield_refinement "$dir" --limit 20
 uv run --extra viewer python -m cst_material.shield_refinement "$dir"

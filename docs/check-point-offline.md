@@ -22,7 +22,7 @@ uv pip install --python .\.venv-occt\Scripts\python.exe cadquery-ocp==8.0.1.1.0
 也可以从其他 Python 代码直接调用：
 
 ```python
-from check_point import check_point, load_solid, classify_point
+from cst_material.check_point import check_point, classify_point, load_solid
 
 # 单次
 print(check_point(r"D:\CAD\spring.step", 10, 20, 5))

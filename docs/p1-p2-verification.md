@@ -14,15 +14,15 @@
 ## 准备运行（PowerShell，同一代码块）
 
 在项目根目录执行。**使用此前已经安装且 `import cst` 成功的 Python 解释器**；不要求重复安装 CST 或扫描环境。
-本地只需拉取这一开发分支，不用切换 main。
+本地只需拉取 `main`。
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw '获取分支失败' }
-git switch feat/cst-p0-probe
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换分支失败' }
-git pull --ff-only origin feat/cst-p0-probe
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw '更新代码失败' }
 $env:PYTHONPATH = (Join-Path (Get-Location) 'src')
 

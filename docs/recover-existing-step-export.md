@@ -9,8 +9,8 @@
 先关闭查看器，在仓库根目录执行以下命令。把导出目录替换为真实路径，**不是 CST 工程文件路径**。
 
 ```powershell
-git switch feat/geometry-library
-git pull --ff-only origin feat/geometry-library
+git switch main
+git pull --ff-only origin main
 $dir = "D:\\CST\\Original.solid_export_diagnostic"
 uv run --extra cad python repair_export.py "$dir" --dry-run
 uv run --extra cad python repair_export.py "$dir"

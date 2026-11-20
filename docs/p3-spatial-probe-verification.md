@@ -27,9 +27,9 @@ CST 2025 官方离线帮助 `VBA_3D/common_vbasolido/common_vbasolido_solid_obje
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw '获取 P3-C 分支失败' }
-git switch feat/cst-p3-spatial-probe
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换 P3-C 分支失败' }
-git pull --ff-only origin feat/cst-p3-spatial-probe
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw '更新分支失败' }
 
 $env:PYTHONPATH = Join-Path (Get-Location) 'src'
@@ -75,7 +75,7 @@ Get-Content 'local-data\P3C_Spatial_Report.json' -Encoding UTF8
 
 **这说明文件占用可能是短暂的，不能直接归因于“没有权限”或“用户忘了关 CST”。** 也不能仅凭手动删除成功判断此前是哪一个进程持锁。需要在报错的瞬间收集证据。
 
-诊断分支 `fix/p3c-win32-lock-diagnosis` 已增加：
+已合并到 `main` 的锁诊断功能包括：
 
 1. PowerShell COM 生命周期节点：`application_connected`、`temporary_project_opened`、`macro_returned`、`project_quit_returned` 或 `project_quit_failed`、`powershell_com_finally_completed`。
 2. Python 临时目录清理时间线：第一次失败的相对路径、Windows 错误码、重试次数、累计时间、是否最终释放。
@@ -91,9 +91,9 @@ Get-Content 'local-data\P3C_Spatial_Report.json' -Encoding UTF8
 $ErrorActionPreference = 'Stop'
 git fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'git fetch 失败' }
-git switch fix/p3c-win32-lock-diagnosis
+git switch main
 if ($LASTEXITCODE -ne 0) { throw '切换诊断分支失败' }
-git pull --ff-only origin fix/p3c-win32-lock-diagnosis
+git pull --ff-only origin main
 if ($LASTEXITCODE -ne 0) { throw '更新诊断分支失败' }
 $env:PYTHONPATH = Join-Path (Get-Location) 'src'
 

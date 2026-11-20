@@ -22,8 +22,8 @@ End With
 在项目根目录打开 PowerShell，先修改以下命令中的工程路径。建议原工程目录有充足的可用空间；导出 7000～8000 个 Solid 可能产生大量文件，耗时取决于工程复杂度和硬盘速度。
 
 ```powershell
-git switch feat/solid-structure-recognition-v1
-git pull --ff-only origin feat/solid-structure-recognition-v1
+git switch main
+git pull --ff-only origin main
 uv sync --extra viewer
 
 # 修改为自己的真实工程路径
@@ -71,10 +71,10 @@ Original.solid_export_diagnostic/
 uv run --extra viewer python -m cst_material.all_solid_export "D:\CST\Original.cst" --limit 10
 ```
 
-**不要在准备全量导出的正式目录里先运行 `--limit 10`**：该命令会生成只包含前 10 个 Solid 的清单，随后全量运行会复用该目录。更推荐使用独立的 `test_single_solid_step_10.py` 快速验证工具，并指定单独输出目录：
+**不要在准备全量导出的正式目录里先运行 `--limit 10`**：该命令会生成只包含前 10 个 Solid 的清单，随后全量运行会复用该目录。更推荐使用独立的 `export_ten_solids.py` 快速验证工具，并指定单独输出目录：
 
 ```powershell
-uv run --extra viewer python test_single_solid_step_10.py "D:\CST\Original.cst" "D:\CST\single_solid_test_10"
+uv run --extra viewer python export_ten_solids.py "D:\CST\Original.cst" "D:\CST\single_solid_test_10"
 ```
 
 快速验证输出目录必须不存在。
