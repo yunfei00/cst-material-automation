@@ -17,7 +17,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v1"
+VERSION = "battery-geometry-v2"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -136,7 +136,7 @@ def scan(folder, *, workers=8, progress=None):
     if not db.is_file():
         raise FileNotFoundError("缺少 P5 几何索引")
     with sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True) as conn:
-        rows = conn.execute("SELECT solid_id,step FROM solids WHERE status='PASS'").fetchall()
+        rows = conn.execute("SELECT solid_id,step,features_json,step_sha256 FROM solids WHERE status='PASS'").fetchall()
     signature, _ = source_signature(root)
     cache = root / "battery_recognition.json"
     old = complete_cached_report(root)
@@ -151,6 +151,20 @@ def scan(folder, *, workers=8, progress=None):
         except (OSError, ValueError, TypeError):
             pass
     summary = Counter({"total": len(rows), "failed": 0, "matched": 0, "reused": 0})
+    ranked = []
+    for sid, relative, raw, sha in rows:
+        try:
+            volume = float((json.loads(raw) if raw else {}).get("volume_mm3", 0))
+            if not math.isfinite(volume) or volume < 0:
+                volume = 0
+        except (ValueError, TypeError):
+            volume = 0
+        ranked.append((volume, sid, relative, sha))
+    ranked.sort(reverse=True)
+    limit = max(1, math.ceil(len(ranked) * 0.15)) if ranked else 0
+    if progress:
+        progress({"event": "phase", "message": f"体积排序完成：精查前 {limit} 个",
+                  "total": len(rows), "candidates": limit})
     results, tasks = {}, []
 
     def save(complete):
@@ -177,12 +191,17 @@ def scan(folder, *, workers=8, progress=None):
             progress({"event": "progress", "done": len(results), "total": len(rows),
                       "matched": summary["matched"], "failed": summary["failed"]})
 
-    for sid, relative in rows:
+    for rank, (_volume, sid, relative, indexed_sha) in enumerate(ranked):
+        if rank >= limit:
+            accept(sid, {"status": "PASS", "verdict": "OTHER",
+                         "reason": "体积排名快速排除，未经精确几何验证",
+                         "sha256": indexed_sha or "", "prefiltered": True})
+            continue
         try:
             path = (root / relative).resolve()
             if not path.is_relative_to(root) or not path.is_file():
                 raise FileNotFoundError("STEP 文件不存在或路径越界")
-            digest = sha256_file(path)
+            digest = indexed_sha or sha256_file(path)
             cached = previous.get(sid)
             if cached and cached.get("sha256") == digest and cached.get("status") == "PASS":
                 summary["reused"] += 1
@@ -191,6 +210,9 @@ def scan(folder, *, workers=8, progress=None):
                 tasks.append((sid, str(path), digest))
         except Exception as exc:  # noqa: BLE001
             accept(sid, {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"})
+    if progress:
+        progress({"event": "phase", "message": f"正在并行精查 {len(tasks)} 个 STEP",
+                  "done": len(results), "total": len(rows)})
     count = max(1, min(int(workers), len(tasks) or 1, os.cpu_count() or 1))
     if count == 1:
         for task in tasks:
