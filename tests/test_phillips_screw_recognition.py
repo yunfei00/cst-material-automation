@@ -334,3 +334,14 @@ def test_circular_edge_and_straight_shaft_are_not_threads():
     assert not _helix_from_curve_points(circle, (0, 0, 1), (0, 0, 0), 2)["verified"]
     straight = [(2, 0, i / 96) for i in range(97)]
     assert not _helix_from_curve_points(straight, (0, 0, 1), (0, 0, 0), 2)["verified"]
+
+
+def test_hardware_aware_worker_count():
+    from cst_material.phillips_screw_recognition import recommended_workers
+
+    gib = 1024**3
+    assert recommended_workers(8000, cpu_count=16, available_memory=16 * gib) == 8
+    assert recommended_workers(8000, cpu_count=4, available_memory=16 * gib) == 3
+    assert recommended_workers(8000, cpu_count=16, available_memory=3 * gib) == 2
+    assert recommended_workers(2, cpu_count=16, available_memory=16 * gib) == 2
+    assert recommended_workers(8000, cpu_count=1, available_memory=gib) == 1
