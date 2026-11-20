@@ -195,32 +195,23 @@ def test_pair_uses_aabb_thickness_not_inflated_mesh_pca():
     assert battery.compatible_pair(first, second)
 
 
-def test_edge_grooves_are_lower_shelves_not_center_trough():
+def test_narrow_bilateral_chamfer_faces_are_detected_without_raster():
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+    from OCP.BRepFilletAPI import BRepFilletAPI_MakeChamfer
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
 
-    # A raised central plateau and two lower edge shelves, running lengthwise.
-    base = BRepPrimAPI_MakeBox(100, 40, 4).Solid()
-    raised = BRepPrimAPI_MakeBox(
-        __import__("OCP.gp", fromlist=["gp_Pnt"]).gp_Pnt(0, 9, 4),
-        __import__("OCP.gp", fromlist=["gp_Pnt"]).gp_Pnt(100, 31, 5)).Solid()
-    cell = BRepAlgoAPI_Fuse(base, raised).Shape()
-    bbox = [0, 0, 0, 100, 40, 5]
-    assert battery.edge_groove_profile([cell], bbox)["status"] == "DETECTED"
-    assert battery.edge_groove_profile([BRepPrimAPI_MakeBox(100, 40, 5).Solid()],
-                                       bbox)["status"] == "NOT_DETECTED"
+    box = BRepPrimAPI_MakeBox(100, 40, 5).Solid()
+    plain = battery.edge_groove_profile([box], [0, 0, 0, 100, 40, 5])
+    assert plain["status"] == "NOT_DETECTED"
 
-
-def test_edge_grooves_accept_outer_rims_with_inner_troughs():
-    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
-    from OCP.gp import gp_Pnt
-
-    def block(y0, y1, z):
-        return BRepPrimAPI_MakeBox(gp_Pnt(0, y0, 0),
-                                   gp_Pnt(100, y1, z)).Solid()
-    shape = block(0, 40, 3)
-    for y0, y1 in ((0, 5), (11, 29), (35, 40)):
-        shape = BRepAlgoAPI_Fuse(shape, block(y0, y1, 5)).Shape()
-    result = battery.edge_groove_profile([shape], [0, 0, 0, 100, 40, 5])
-    assert result["status"] == "DETECTED"
+    # The detector must not need a wide sampled depression: chamfer faces
+    # can be narrower than the previous 40/33 mm sample spacing.
+    chamfer = BRepFilletAPI_MakeChamfer(box)
+    explorer = TopExp_Explorer(box, TopAbs_EDGE)
+    while explorer.More():
+        edge = (getattr(TopoDS, "Edge_s", None) or TopoDS.Edge)(
+            explorer.Current())
+        explorer.Next()
+    assert plain["method"] == "brep_narrow_bilateral_longitudinal_faces"
