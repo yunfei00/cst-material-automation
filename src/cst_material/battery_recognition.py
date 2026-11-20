@@ -90,8 +90,8 @@ def cavity_profile(solids, bbox, *, grid=13):
     This is evidence of a structural pocket, not proof of battery identity.
     """
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-    from OCP.TopAbs import TopAbs_IN, TopAbs_ON
     from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN, TopAbs_ON
 
     if len(bbox) != 6 or any(not math.isfinite(v) for v in bbox):
         return {"status": "UNAVAILABLE", "reason": "invalid bounding box"}
