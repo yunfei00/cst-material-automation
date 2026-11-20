@@ -517,7 +517,7 @@ def launch_viewer(path: str | Path) -> int:
             import json
             import sys
 
-            from cst_material.battery_recognition import VERSION, complete_cached_report
+            from cst_material.battery_recognition import VERSION
 
             def show_report(report):
                 rows = [{"solid_id": sid, "verdict": "BATTERY_SHAPE",
@@ -534,23 +534,16 @@ def launch_viewer(path: str | Path) -> int:
                 self.search_summary.setText(
                     f'电池形态匹配 {len(rows)} 个；失败 {report["summary"].get("failed", 0)} 个。'
                     '仅凭几何不能确认电池身份或自动赋材。')
-            try:
-                cached = complete_cached_report(self.root)
-            except (OSError, ValueError):
-                cached = None
-            if cached is not None:
-                show_report(cached)
-                return
             process = QProcess(self)
             self.refine_process = process
             self.search_results = {}
             self._filter_tree(self.search.text())
-            self.search_summary.setText("正在使用多进程识别电池几何形态")
+            self.search_summary.setText("电池识别：正在启动后台扫描（最多 10 个 STEP，2 进程）")
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
             process.setArguments(["-m", "cst_material.battery_recognition",
                                   str(self.root), "--workers",
-                                  str(self.fastener_workers.value())])
+                                  "2"])
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
             pending = bytearray()
 
@@ -574,7 +567,6 @@ def launch_viewer(path: str | Path) -> int:
                                 "solid_id": sid, "verdict": "BATTERY_SHAPE",
                                 "candidate_type": "BATTERY_SHAPE"}
                     elif event.get("event") == "progress" and self.battery_only.isChecked():
-                        self._filter_tree(self.search.text())
                         self.search_summary.setText(
                             f'电池识别 {event.get("done", 0)}/{event.get("total", 0)}；'
                             f'形态匹配 {event.get("matched", 0)}；'
