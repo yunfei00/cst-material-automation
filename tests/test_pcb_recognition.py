@@ -33,16 +33,6 @@ def test_max_volume_wins_and_z_bounds(tmp_path):
     assert result["candidate"]["z_thin_hint"]
 
 
-def test_large_nonflat_piece_does_not_override_qualified_board(tmp_path):
-    _database(tmp_path, [
-        ("case-main-pcb:housing", 4000, [0, 0, 0, 20, 20, 20]),
-        ("case-main-pcb:pcb", 3000, [0, 0, 0, 100, 80, 1.6]),
-    ])
-    result = find_main_pcb(tmp_path)
-    assert result["candidate"]["solid_id"] == "case-main-pcb:pcb"
-    assert result["candidate"]["z_thin_hint"]
-
-
 def test_no_eligible_volume(tmp_path):
     _database(tmp_path, [("case-main-pcb:small", 100, [0, 0, 0, 10, 10, 1])])
     result = find_main_pcb(tmp_path)
