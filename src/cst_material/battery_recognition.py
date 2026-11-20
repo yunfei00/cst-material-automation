@@ -187,9 +187,10 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
                 explorer.Current())
             box = Bnd_Box()
             BRepBndLib.Add_s(face, box)
-            bounds = box.Get()
-            faces.append(([bounds[i] for i in range(3)],
-                          [bounds[i + 3] for i in range(3)]))
+            corner_min = box.CornerMin()
+            corner_max = box.CornerMax()
+            faces.append(([corner_min.X(), corner_min.Y(), corner_min.Z()],
+                          [corner_max.X(), corner_max.Y(), corner_max.Z()]))
             explorer.Next()
 
     # Identify pairs of long, approximately vertical faces bracketing a
