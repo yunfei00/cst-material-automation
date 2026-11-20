@@ -406,7 +406,32 @@ def _helix_from_curve_points(points, axis, origin, shaft_radius):
             "reason": "B-rep 恒导程螺旋边" if verified else "螺距拟合不稳定"}
 
 
-def _brep_thread_evidence(solids, axis, origin, shaft_radius):
+def _helix_shaft_location(edge_points, mesh_points, axis, origin, shaft_radius, profile):
+    """Check a helix lies in the narrow shaft-side axial region."""
+    direction = _unit(axis)
+    if direction is None or not mesh_points or not profile.get("verified"):
+        return False
+    all_z = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
+             for p in mesh_points]
+    lo, hi = min(all_z), max(all_z)
+    if hi - lo <= 1e-6:
+        return False
+    zs = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
+          for p in edge_points]
+    # Reserve the head-side 25% of the body; threads must remain on the shaft.
+    cutoff = lo + 0.25 * (hi - lo) if profile["left_head"] else hi - 0.25 * (hi - lo)
+    if profile["left_head"] and min(zs) < cutoff:
+        return False
+    if not profile["left_head"] and max(zs) > cutoff:
+        return False
+    radii = []
+    for point, z in zip(edge_points, zs):
+        delta = tuple(point[i] - origin[i] for i in range(3))
+        radii.append(math.sqrt(max(0.0, _dot(delta, delta) - z * z)))
+    return 0.85 * shaft_radius <= sum(radii) / len(radii) <= 1.12 * shaft_radius
+
+
+def _brep_thread_evidence(solids, axis, origin, shaft_radius, *, mesh_points=None, profile=None):
     """Sample actual STEP edges, not a visually inferred mesh spiral."""
     from OCP.BRepAdaptor import BRepAdaptor_Curve
     from OCP.TopAbs import TopAbs_EDGE
@@ -414,6 +439,7 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius):
     from OCP.TopoDS import TopoDS
 
     examined = 0
+    off_shaft_helix = False
     for solid in solids:
         explorer = TopExp_Explorer(solid, TopAbs_EDGE)
         while explorer.More():
@@ -432,9 +458,15 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius):
                 points.append((p.X(), p.Y(), p.Z()))
             evidence = _helix_from_curve_points(points, axis, origin, shaft_radius)
             if evidence["verified"]:
+                if mesh_points is not None and profile is not None and not _helix_shaft_location(
+                        points, mesh_points, axis, origin, shaft_radius, profile):
+                    off_shaft_helix = True
+                    continue
                 return {**evidence, "edges_examined": examined, "method": "brep_edge"}
     return {"verified": False, "edges_examined": examined,
-            "reason": "未发现连续恒导程螺旋边", "method": "brep_edge"}
+            "off_shaft_helix": off_shaft_helix,
+            "reason": "螺纹不在杆部" if off_shaft_helix else "未发现连续恒导程螺旋边",
+            "method": "brep_edge"}
 
 
 def _locating_pin_steps(cylinders, axis, *, minimum_levels=3):
@@ -539,6 +571,7 @@ def recognize_step(path: str | Path) -> dict:
     head, shaft, stepped = _identify_head_shaft(cylinders, axis)
     head_radius = head["radius"] if head else None
     profile = {"verified": False, "reason": "未确认单侧大头"}
+    points = []
     core = {"verified": False, "reason": "未验证杆部实体轴心"}
     if coaxial["verified"] and stepped and shaft is not None and head_radius is not None:
         points = _mesh_points(solids)
@@ -551,12 +584,13 @@ def recognize_step(path: str | Path) -> dict:
     thread = {"verified": False, "reason": "未满足头杆实体结构"}
     structural = coaxial["verified"] and stepped and profile["verified"] and core["verified"]
     if structural:
-        thread = _brep_thread_evidence(solids, axis, shaft["axis_origin"], shaft["radius"])
+        thread = _brep_thread_evidence(solids, axis, shaft["axis_origin"], shaft["radius"],
+                                       mesh_points=points, profile=profile)
     # A thread is positive screw evidence even for multi-shoulder screws.
     # A smooth two-level pin is ambiguous and must NOT default to screw.
     if structural and thread["verified"]:
         verdict = "PHILLIPS_SCREW"
-    elif structural and pin["verified"]:
+    elif structural and pin["verified"] and not thread.get("off_shaft_helix"):
         verdict = "LOCATING_PIN"
     else:
         verdict = "OTHER"
@@ -576,6 +610,7 @@ def recognize_step(path: str | Path) -> dict:
             "solid_axis_core_evidence": core,
             "head_radius": head_radius,
             "shaft_radius": shaft["radius"] if shaft else None,
+            "thread_evidence": thread,
             "warning": "仅明确螺旋边确认螺丝；多台阶无螺纹确认定位销；证据不足不分类"}
 
 
@@ -600,7 +635,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v14"
+        if (report.get("algorithm_version") != "phillips-geometry-v15"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
