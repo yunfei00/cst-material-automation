@@ -147,3 +147,20 @@ def test_scan_selects_two_adjacent_cells(tmp_path, monkeypatch):
     report = json.loads((tmp_path / "battery_recognition.json").read_text(encoding="utf-8"))
     assert {sid for sid, rec in report["results"].items()
             if rec.get("verdict") == "BATTERY_SHAPE"} == {"cell-0", "cell-1"}
+
+
+def test_cavity_profile_detects_recess_but_not_solid_box():
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    outer = BRepPrimAPI_MakeBox(100, 60, 10).Solid()
+    recess = BRepPrimAPI_MakeBox(gp_Pnt(20, 15, 5),
+                                gp_Pnt(80, 45, 11)).Solid()
+    hollowed = BRepAlgoAPI_Cut(outer, recess).Shape()
+    bbox = [0, 0, 0, 100, 60, 10]
+    plain = battery.cavity_profile([outer], bbox)
+    pocket = battery.cavity_profile([hollowed], bbox)
+    assert plain["status"] == "NOT_DETECTED"
+    assert pocket["status"] == "DETECTED"
+    assert pocket["max_regions"] >= 1
