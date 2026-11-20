@@ -412,12 +412,12 @@ def _thread_surface_evidence(solids, axis, origin, shaft_radius, profile, *,
     An annular groove repeats in axial sections but has no angular phase shift.
     A helix edge alone is insufficient: section teeth and phase must agree.
     """
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
     from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
+    from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
-    from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
 
     direction = _unit(axis)
     if direction is None or not profile.get("verified"):
