@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v8"
+VERSION = "battery-geometry-v9"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -201,24 +201,27 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
                     highest = layer
                     break
             heights.append(highest)
-        # Compare local depressions to the adjacent interior and edge shoulder.
+        # Real cell profile: raised center, lower shelves at both width edges.
+        # No outer raised shoulder is required. Compare each side against the
+        # median central plateau to tolerate local mesh-independent variation.
+        center = [h for h in heights[width_samples // 3:width_samples * 2 // 3]
+                  if h is not None]
+        if len(center) < 3:
+            depths.append([False, False])
+            continue
+        center.sort()
+        plateau = center[len(center) // 2]
         bands = []
-        for left, right in ((2, width_samples // 3), (width_samples * 2 // 3, width_samples - 2)):
-            found = False
-            for j in range(left, right):
-                h = heights[j]
-                if h is None:
-                    continue
-                before = [v for v in heights[max(0, j - 4):j] if v is not None]
-                after = [v for v in heights[j + 1:min(width_samples, j + 5)] if v is not None]
-                if before and after and max(before) >= h + 2 and max(after) >= h + 2:
-                    found = True
-                    break
-            bands.append(found)
+        for left, right in ((1, width_samples // 4),
+                            (width_samples * 3 // 4, width_samples - 1)):
+            side = [h for h in heights[left:right] if h is not None]
+            # Require a sustained lowered band, not a single edge artifact.
+            bands.append(len(side) >= 2 and
+                         sum(h <= plateau - 2 for h in side) >= max(2, len(side) // 2))
         depths.append(bands)
     both = sum(all(section) for section in depths)
     return {"status": "DETECTED" if both >= 3 else "NOT_DETECTED",
-            "method": "brep_two_edge_longitudinal_surface_recess",
+            "method": "brep_raised_center_lowered_bilateral_edges",
             "sections_with_both_grooves": both, "sections_checked": length_sections,
             "width_samples": width_samples}
 
