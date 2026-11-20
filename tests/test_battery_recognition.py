@@ -201,4 +201,25 @@ def test_narrow_edge_detector_rejects_plain_cuboid():
     box = BRepPrimAPI_MakeBox(100, 40, 5).Solid()
     result = battery.edge_groove_profile([box], [0, 0, 0, 100, 40, 5])
     assert result["status"] == "NOT_DETECTED"
-    assert result["method"] == "brep_narrow_bilateral_longitudinal_faces"
+    assert result["method"] == "brep_bilateral_u_profile_faces"
+
+
+def test_bilateral_u_grooves_detected_and_one_sided_rejected():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.gp import gp_Pnt
+
+    box = BRepPrimAPI_MakeBox(100, 40, 5).Solid()
+    def cut_groove(shape, y):
+        tool = BRepPrimAPI_MakeBox(
+            gp_Pnt(0, y, 4), gp_Pnt(100, y + 0.3, 6)).Solid()
+        return BRepAlgoAPI_Cut(shape, tool).Shape()
+
+    bbox = [0, 0, 0, 100, 40, 5]
+    single = cut_groove(box, 0.5)
+    double = cut_groove(single, 39.2)
+    assert battery.edge_groove_profile([single], bbox)["status"] == "NOT_DETECTED"
+    result = battery.edge_groove_profile([double], bbox)
+    assert result["status"] == "DETECTED"
+    assert result["left_u_profiles"] >= 1
+    assert result["right_u_profiles"] >= 1
