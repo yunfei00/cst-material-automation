@@ -516,6 +516,7 @@ def launch_viewer(path: str | Path) -> int:
                 return
             import json
             import sys
+
             from cst_material.battery_recognition import VERSION, complete_cached_report
 
             def show_report(report):
