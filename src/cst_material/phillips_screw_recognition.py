@@ -616,7 +616,7 @@ def _helix_on_shaft(points, axis, origin, profile, mesh_points, *, tolerance=0.0
     # Require at least two adjacent wide slices to define the head, and find
     # the last wide slice on the head side. This excludes a thread on the
     # purported head even when a lens shoulder occurs before the thread.
-    head_window = range(0, bins // 2) if head_left else range(bins // 2, bins)
+    head_window = range(bins // 2) if head_left else range(bins // 2, bins)
     wide = [i for i in head_window
             if radii[i] is not None and radii[i] >= boundary_radius]
     if len(wide) < 2:
