@@ -205,8 +205,8 @@ def test_narrow_edge_detector_rejects_plain_cuboid():
 
 
 def test_bilateral_u_grooves_detected_and_one_sided_rejected():
-    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
     box = BRepPrimAPI_MakeBox(100, 40, 5).Solid()
