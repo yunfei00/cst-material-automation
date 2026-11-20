@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v13",
+        "algorithm_version": "phillips-geometry-v14",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -314,3 +314,23 @@ def test_short_real_pin_shoulder_survives_lower_threshold():
     faces[-1]["area"] = 2 * math.pi * faces[-1]["radius"] * 0.11
     evidence = _locating_pin_steps(faces, (0, 0, 1))
     assert evidence["verified"]
+
+
+def test_true_constant_pitch_helix_detected():
+    from cst_material.phillips_screw_recognition import _helix_from_curve_points
+
+    points = [(2 * math.cos(t), 2 * math.sin(t), 0.5 * t / (2 * math.pi))
+              for t in (i * 5 * math.pi / 96 for i in range(97))]
+    result = _helix_from_curve_points(points, (0, 0, 1), (0, 0, 0), 2)
+    assert result["verified"]
+    assert abs(result["pitch_mm"] - 0.5) < 0.01
+
+
+def test_circular_edge_and_straight_shaft_are_not_threads():
+    from cst_material.phillips_screw_recognition import _helix_from_curve_points
+
+    circle = [(2 * math.cos(t), 2 * math.sin(t), 0)
+              for t in (i * 5 * math.pi / 96 for i in range(97))]
+    assert not _helix_from_curve_points(circle, (0, 0, 1), (0, 0, 0), 2)["verified"]
+    straight = [(2, 0, i / 96) for i in range(97)]
+    assert not _helix_from_curve_points(straight, (0, 0, 1), (0, 0, 0), 2)["verified"]
