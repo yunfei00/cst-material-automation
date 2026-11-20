@@ -555,6 +555,67 @@ def _helix_on_shaft(points, axis, origin, profile, mesh_points, *, tolerance=0.0
     return max(heights) <= low + (transition + 1) * span / bins + tolerance
 
 
+def _external_thread_material(solids, points, axis, origin, *, tolerance=1e-5):
+    """Confirm solid on the axis-facing side of a thread edge.
+
+    A modeled internal thread has the reverse occupancy: void toward the
+    axis and material away from it. Indeterminate edge neighborhoods fail
+    closed, rather than being treated as external threads.
+    """
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN, TopAbs_OUT
+
+    direction = _unit(axis)
+    if direction is None or len(points) < 12:
+        return {"verified": False, "reason": "缺少实体侧判定数据"}
+    classifiers = [BRepClass3d_SolidClassifier(solid) for solid in solids]
+
+    def occupied(coords):
+        states = []
+        for classifier in classifiers:
+            classifier.Perform(gp_Pnt(*coords), tolerance)
+            states.append(classifier.State())
+        if TopAbs_IN in states:
+            return True
+        if all(state == TopAbs_OUT for state in states):
+            return False
+        return None
+
+    external = internal = uncertain = 0
+    for point in points[::max(1, len(points) // 16)]:
+        delta = tuple(point[i] - origin[i] for i in range(3))
+        z = _dot(delta, direction)
+        radial = tuple(delta[i] - z * direction[i] for i in range(3))
+        radius = math.sqrt(_dot(radial, radial))
+        if radius <= tolerance * 10:
+            uncertain += 1
+            continue
+        normal = tuple(v / radius for v in radial)
+        # Probe more than one scale, since a tiny probe can fall within CAD
+        # tolerance, whereas a large probe can cross a narrow thread tooth.
+        classification = None
+        for offset in (max(10 * tolerance, radius * 0.001),
+                       max(30 * tolerance, radius * 0.003)):
+            inner = occupied(tuple(point[i] - offset * normal[i] for i in range(3)))
+            outer = occupied(tuple(point[i] + offset * normal[i] for i in range(3)))
+            if inner is None or outer is None or inner == outer:
+                continue
+            classification = "external" if inner and not outer else "internal"
+            break
+        if classification == "external":
+            external += 1
+        elif classification == "internal":
+            internal += 1
+        else:
+            uncertain += 1
+    verified = external >= 4 and internal == 0 and external > uncertain
+    return {"verified": verified, "external_samples": external,
+            "internal_samples": internal, "uncertain_samples": uncertain,
+            "reason": ("径向内侧为实体、外侧为空间" if verified
+                       else "无法确认外螺纹实体侧或检测到内螺纹")}
+
+
 def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                           mesh_points=None, profile=None):
     """Require a helical edge and independently measured external tooth relief."""
@@ -596,7 +657,11 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
             if not phase["verified"]:
                 continue
+            material = _external_thread_material(solids, points, axis, origin)
+            if not material["verified"]:
+                continue
             return {**evidence, "verified": True, "edges_examined": examined,
+                    "material_evidence": material,
                     "phase_evidence": phase, "section_count": section["sections"],
                     "method": "brep_helix_and_meridian_teeth"}
     return {"verified": False, "edges_examined": examined,
@@ -772,7 +837,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v20"
+        if (report.get("algorithm_version") != "phillips-geometry-v21"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -830,7 +895,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v20":
+            if old.get("algorithm_version") == "phillips-geometry-v21":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -843,7 +908,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v20",
+            "algorithm_version": "phillips-geometry-v21",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
