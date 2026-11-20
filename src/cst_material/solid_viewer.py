@@ -536,6 +536,7 @@ def launch_viewer(path: str | Path) -> int:
                     configuration, "未识别")
                 self.search_summary.setText(
                     f'电池识别：{label}，匹配 {len(rows)} 个 Solid；'
+                    f'凹槽/中空结构 {report["summary"].get("expansion_structures", 0)} 个；'
                     f'失败 {report["summary"].get("failed", 0)} 个。'
                     '仅凭几何不能确认电池身份或自动赋材。')
             process = QProcess(self)
