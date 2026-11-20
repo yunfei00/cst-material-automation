@@ -17,7 +17,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v3"
+VERSION = "battery-geometry-v4"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -122,7 +122,6 @@ def complete_cached_report(root: Path):
         if (report.get("algorithm_version") != VERSION
                 or report.get("source_signature") != signature
                 or not report.get("complete")
-                or len(report.get("results", {})) != total
                 or report.get("summary", {}).get("total") != total):
             return None
         return report
@@ -130,7 +129,7 @@ def complete_cached_report(root: Path):
         return None
 
 
-def scan(folder, *, workers=8, progress=None):
+def scan(folder, *, workers=2, progress=None):
     root = Path(folder).resolve(strict=True)
     db = root / "geometry_features.sqlite3"
     if not db.is_file():
@@ -162,10 +161,12 @@ def scan(folder, *, workers=8, progress=None):
         ranked.append((volume, sid, relative, sha))
     ranked.sort(reverse=True)
     limit = min(10, len(ranked))
+    ranked = ranked[:limit]
     if progress:
         progress({"event": "phase", "message": f"体积排序完成：精查前 {limit} 个",
                   "total": len(rows), "candidates": limit})
     results, tasks = {}, []
+    summary["candidates"] = limit
 
     def save(complete):
         tmp = cache.with_suffix(".json.tmp")
@@ -183,18 +184,11 @@ def scan(folder, *, workers=8, progress=None):
         elif rec.get("verdict") == "BATTERY_SHAPE":
             summary["matched"] += 1
 
-        if len(results) % 20 == 0 or len(results) == len(rows):
-            save(len(results) == len(rows))
-        if progress and (len(results) % 5 == 0 or len(results) == len(rows)):
-            progress({"event": "progress", "done": len(results), "total": len(rows),
+        if progress:
+            progress({"event": "progress", "done": len(results), "total": limit,
                       "matched": summary["matched"], "failed": summary["failed"]})
 
-    for rank, (_volume, sid, relative, indexed_sha) in enumerate(ranked):
-        if rank >= limit:
-            accept(sid, {"status": "PASS", "verdict": "OTHER",
-                         "reason": "体积排名快速排除，未经精确几何验证",
-                         "sha256": indexed_sha or "", "prefiltered": True})
-            continue
+    for _volume, sid, relative, indexed_sha in ranked:
         try:
             path = (root / relative).resolve()
             if not path.is_relative_to(root) or not path.is_file():
@@ -210,8 +204,8 @@ def scan(folder, *, workers=8, progress=None):
             accept(sid, {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"})
     if progress:
         progress({"event": "phase", "message": f"正在并行精查 {len(tasks)} 个 STEP",
-                  "done": len(results), "total": len(rows)})
-    count = max(1, min(int(workers), len(tasks) or 1, os.cpu_count() or 1))
+                  "done": len(results), "total": limit})
+    count = max(1, min(int(workers), 2, len(tasks) or 1, os.cpu_count() or 1))
     if count == 1:
         for task in tasks:
             accept(*_one(task))
@@ -240,7 +234,7 @@ def scan(folder, *, workers=8, progress=None):
     summary["matched"] = int(winner is not None)
     if winner and progress:
         progress({"event": "match", "solid_id": winner, "verdict": "BATTERY_SHAPE",
-                  "done": len(results), "total": len(rows)})
+                  "done": len(results), "total": limit})
     save(True)
     return {"summary": dict(summary), "output": str(cache), "workers": count}
 
@@ -248,7 +242,7 @@ def scan(folder, *, workers=8, progress=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="手机电池几何形态识别")
     parser.add_argument("folder")
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args(argv)
     def emit(event):
         print(json.dumps(event, ensure_ascii=False), flush=True)
