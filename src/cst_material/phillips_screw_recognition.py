@@ -601,7 +601,7 @@ def _helix_on_shaft(points, axis, origin, profile, mesh_points, *, tolerance=0.0
         envelope[idx].append(radius)
     radii = [max(row) if row else None for row in envelope]
     observed = [r for r in radii if r is not None]
-    if len(observed) < bins // 2:
+    if len(observed) < 8:
         return False
     # A head must be measurably wider than the stable shaft. Do not infer a
     # shoulder from an end chamfer or an optical lens surface.
