@@ -520,7 +520,6 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
     section = _thread_surface_evidence(solids, axis, origin, shaft_radius, profile)
     if not section["verified"]:
         return section
-    direction = _unit(axis)
     examined = 0
     for solid in solids:
         explorer = TopExp_Explorer(solid, TopAbs_EDGE)
@@ -541,20 +540,8 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                 continue
             # Match a helical ridge to actual radial relief at its axial
             # position, without requiring a fixed fraction of the part length.
-            heights = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
-                       for p in points]
-            zlo, zhi = min(heights), max(heights)
-            observed = []
-            for teeth in section["profiles"]:
-                local = [r for z, r in teeth if zlo <= z <= zhi]
-                if local:
-                    observed.append((min(local), max(local)))
-            if len(observed) < 2:
-                continue
-            # Reject cylindrical surfaces and annular grooves without helix.
-            relief = [hi - lo for lo, hi in observed]
-            if not all(value > 1e-5 for value in relief):
-                continue
+            # Check actual teeth near the helix, not the global radius span:
+            # the latter could merely measure a head shoulder or end chamfer.
             phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
             if not phase["verified"]:
                 continue
@@ -684,11 +671,13 @@ def recognize_step(path: str | Path) -> dict:
         thread = _brep_thread_evidence(solids, axis, shaft["axis_origin"], shaft["radius"],
                                        mesh_points=points, profile=profile)
     # A thread is positive screw evidence even for multi-shoulder screws.
-    # A smooth two-level pin is ambiguous and must NOT default to screw.
+    # Missing threads are ambiguous and must NOT default to a locating pin.
     if structural and thread["verified"]:
         verdict = "PHILLIPS_SCREW"
-    elif structural and pin["verified"] and not thread.get("verified"):
-        verdict = "LOCATING_PIN"
+    elif structural and pin["verified"] and thread.get("verified") is False:
+        # Missing modeled thread does not prove a locating pin. The STEP
+        # export may represent the fastener thread cosmetically.
+        verdict = "OTHER"
     else:
         verdict = "OTHER"
     score = 100 if verdict != "OTHER" else 0
@@ -708,7 +697,7 @@ def recognize_step(path: str | Path) -> dict:
             "head_radius": head_radius,
             "shaft_radius": shaft["radius"] if shaft else None,
             "thread_evidence": thread,
-            "warning": "仅明确螺旋边确认螺丝；多台阶无螺纹确认定位销；证据不足不分类"}
+            "warning": "只有螺旋边与多角度截面一致才确认螺纹；未建模螺纹不证明定位销；证据不足不分类"}
 
 
 def source_signature(root: Path) -> tuple[str, int]:
@@ -732,7 +721,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v18"
+        if (report.get("algorithm_version") != "phillips-geometry-v19"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -790,7 +779,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v18":
+            if old.get("algorithm_version") == "phillips-geometry-v19":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -803,7 +792,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v18",
+            "algorithm_version": "phillips-geometry-v19",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
