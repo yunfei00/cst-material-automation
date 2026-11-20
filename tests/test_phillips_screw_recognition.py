@@ -359,6 +359,7 @@ def test_helix_edge_does_not_require_shaft_radius_ratio():
 
 def test_thread_section_rejects_smooth_cylinder():
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+
     from cst_material.phillips_screw_recognition import _brep_thread_evidence
 
     solid = BRepPrimAPI_MakeCylinder(2.0, 8.0).Shape()
