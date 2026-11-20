@@ -73,7 +73,7 @@ def test_oriented_dimensions_on_real_occt_box():
     assert all(value > 0 for value in dimensions)
 
 
-def test_top_ten_and_single_result(tmp_path, monkeypatch):
+def test_top_ten_and_single_result_without_spatial_evidence(tmp_path, monkeypatch):
     db = tmp_path / "geometry_features.sqlite3"
     with sqlite3.connect(db) as conn:
         conn.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, status TEXT, features_json TEXT, step_sha256 TEXT)")
@@ -101,3 +101,47 @@ def test_top_ten_and_single_result(tmp_path, monkeypatch):
     assert len(report["results"]) == 10
     assert sum(rec.get("verdict") == "BATTERY_SHAPE"
                for rec in report["results"].values()) == 1
+
+
+def _cell(x, y, *, thickness=5, normal=(0, 0, 1)):
+    return {"status": "PASS", "verdict": "BATTERY_SHAPE",
+            "obb_dimensions_mm": [80, 40, thickness],
+            "plane_normal": list(normal),
+            "bbox_mm": [x, y, 0, x + 80, y + 40, thickness],
+            "fill_ratio": 0.9, "length_width_ratio": 2,
+            "flatness": 0.08, "volume_mm3": 16000}
+
+
+def test_dual_cell_pair_adjacent_and_coplanar():
+    assert battery.compatible_pair(_cell(0, 0), _cell(0, 43))
+
+
+def test_dual_cell_rejects_distant_and_stacked_and_mismatched():
+    assert not battery.compatible_pair(_cell(0, 0), _cell(0, 100))
+    assert not battery.compatible_pair(_cell(0, 0), _cell(0, 43, thickness=12))
+    assert not battery.compatible_pair(_cell(0, 0), _cell(0, 43, normal=(0, 1, 0)))
+
+
+def test_scan_selects_two_adjacent_cells(tmp_path, monkeypatch):
+    db = tmp_path / "geometry_features.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, status TEXT, features_json TEXT, step_sha256 TEXT)")
+        for i in range(3):
+            name = f"cell-{i}"
+            (tmp_path / f"{name}.step").write_text(name)
+            conn.execute("INSERT INTO solids VALUES (?,?,?,?,?)",
+                         (name, f"{name}.step", "PASS",
+                          json.dumps({"volume_mm3": 16000 - i}), name))
+    monkeypatch.setattr(battery, "source_signature", lambda _: ("dual-signature", 3))
+    def fake(task):
+        sid, _, digest = task
+        i = int(sid[-1])
+        rec = _cell(0, 43 * i if i < 2 else 200)
+        return sid, {"sha256": digest, **rec}
+    monkeypatch.setattr(battery, "_one", fake)
+    result = battery.scan(tmp_path)
+    assert result["summary"]["matched"] == 2
+    assert result["summary"]["cell_configuration"] == "dual"
+    report = json.loads((tmp_path / "battery_recognition.json").read_text(encoding="utf-8"))
+    assert {sid for sid, rec in report["results"].items()
+            if rec.get("verdict") == "BATTERY_SHAPE"} == {"cell-0", "cell-1"}
