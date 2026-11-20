@@ -11,9 +11,9 @@ import itertools
 import json
 import math
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import sqlite3
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from cst_material.occt_geometry import read_step, sha256_file
