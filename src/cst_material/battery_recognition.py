@@ -204,7 +204,7 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
             continue
         if d[width_axis] <= eps and d[height_axis] > eps:
             walls.append((lo, hi))
-        if d[height_axis] <= eps and d[width_axis] > eps:
+        if d[height_axis] < spans[height_axis] * 0.2 and d[width_axis] > eps:
             bottoms.append((lo, hi))
 
     side_hits = [0, 0]
@@ -214,7 +214,6 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
             right = (c[width_axis] + d[width_axis]) / 2
             if left > right:
                 left, right = right, left
-                a, b, c, d = c, d, a, b
             separation = right - left
             if separation <= eps or separation >= spans[width_axis] * 0.15:
                 continue
@@ -222,12 +221,11 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
             if min(b[length_axis], d[length_axis]) - max(
                     a[length_axis], c[length_axis]) < spans[length_axis] * 0.5:
                 continue
-            bottom_z = max(a[height_axis if False else height_axis],
-                           c[height_axis])
+            bottom_z = max(a[height_axis], c[height_axis])
             for low, high in bottoms:
                 if low[width_axis] > left + eps or high[width_axis] < right - eps:
                     continue
-                if abs(low[height_axis] - bottom_z) > max(eps, spans[height_axis] * 0.02):
+                if abs(low[height_axis] - bottom_z) > max(eps, spans[height_axis] * 0.05):
                     continue
                 if min(high[length_axis], b[length_axis], d[length_axis]) - max(
                         low[length_axis], a[length_axis], c[length_axis]
