@@ -807,8 +807,7 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
     # Whole-edge helices are included; fragments are also joined where CAD
     # split a continuous B-rep boundary into multiple tangent edges.
     helices = _join_helix_segments(
-        fragments, axis, origin, shaft_radius,
-        head_radius=profile.get("head_radius"))
+        fragments, axis, origin, shaft_radius)
     for points, evidence in helices:
         if mesh_points is not None and not _helix_on_shaft(
                 points, axis, origin, profile, mesh_points):
@@ -819,6 +818,14 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
         teeth = _thread_tooth_flanks(section["profiles"], points, axis, origin,
                                     evidence["pitch_mm"])
         if not teeth["verified"]:
+            continue
+        # Derive crest allowance from measured tooth relief, not from an
+        # arbitrary midpoint between the nominal shaft and the head.
+        relief = min(item["min_relief_mm"] for item in teeth["section_details"])
+        radial = [math.sqrt(max(0.0, _dot(delta, delta) - _dot(delta, axis) ** 2))
+                  for point in points
+                  for delta in [tuple(point[i] - origin[i] for i in range(3))]]
+        if max(radial) > shaft_radius + 2 * relief + 0.02:
             continue
         material = _external_thread_material(solids, points, axis, origin)
         if not material["verified"]:
