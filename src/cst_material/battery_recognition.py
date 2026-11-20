@@ -57,13 +57,15 @@ def _oriented_dimensions(solids):
         explorer = TopExp_Explorer(solid, TopAbs_FACE)
         while explorer.More():
             face = (getattr(TopoDS, "Face_s", None) or TopoDS.Face)(explorer.Current())
-            triangulation = BRep_Tool.Triangulation_s(face, face.Location())
+            location = face.Location()
+            triangulation = BRep_Tool.Triangulation_s(face, location)
             if triangulation is not None:
-                nodes = triangulation.Nodes()
+                count = triangulation.NbNodes()
+                transform = location.Transformation()
                 # Bound memory for very detailed STEP parts.
-                stride = max(1, len(nodes) // 2500)
-                for i in range(1, len(nodes) + 1, stride):
-                    p = nodes.Value(i)
+                stride = max(1, count // 2500)
+                for i in range(1, count + 1, stride):
+                    p = triangulation.Node(i).Transformed(transform)
                     points.append((p.X(), p.Y(), p.Z()))
             explorer.Next()
     if len(points) < 8:
