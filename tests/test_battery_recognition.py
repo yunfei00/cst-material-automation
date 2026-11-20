@@ -30,9 +30,10 @@ def test_multiple_bodies_remain_unconfirmed():
 def test_scan_cache_and_failure_preserved(tmp_path, monkeypatch):
     db = tmp_path / "geometry_features.sqlite3"
     with sqlite3.connect(db) as conn:
-        conn.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, status TEXT)")
-        conn.executemany("INSERT INTO solids VALUES (?,?,?)", [
-            ("battery-a", "a.step", "PASS"), ("broken-b", "b.step", "PASS")])
+        conn.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, status TEXT, features_json TEXT, step_sha256 TEXT)")
+        conn.executemany("INSERT INTO solids VALUES (?,?,?,?,?)", [
+            ("battery-a", "a.step", "PASS", '{"volume_mm3":10000}', "a.step"),
+            ("broken-b", "b.step", "PASS", '{"volume_mm3":9000}', "b.step")])
     (tmp_path / "a.step").write_text("a")
     (tmp_path / "b.step").write_text("b")
     monkeypatch.setattr(battery, "source_signature", lambda _: ("signature", 2))
