@@ -823,18 +823,23 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                        for p in points]
             if max(heights) - min(heights) > 0.005:
                 fragments.append(points)
-    # Whole-edge helices are included; fragments are also joined where CAD
-    # split a continuous B-rep boundary into multiple tangent edges.
-    # Avoid quadratic joining when a highly tessellated CAD part contains
-    # thousands of candidate edges. Preserve full-edge helix evidence.
-    if len(fragments) > 400:
-        helices = []
-        for fragment in fragments:
-            result = _helix_from_curve_points(fragment, axis, origin, shaft_radius)
-            if result["verified"]:
-                helices.append((fragment, result))
-    else:
-        helices = _join_helix_segments(fragments, axis, origin, shaft_radius)
+    # Validate original B-rep edges BEFORE any joining. Joining can attach
+    # non-helical neighboring edges and destroy an already valid helix.
+    direct_helices = []
+    partials = []
+    for fragment in fragments:
+        evidence = _helix_from_curve_points(fragment, axis, origin, shaft_radius)
+        if evidence["verified"]:
+            direct_helices.append((fragment, evidence))
+        else:
+            # Preserve fragments only for fallback reconstruction.
+            partials.append(fragment)
+    helices = direct_helices
+    # Never contaminate verified original edges. Reconstruct only if no
+    # complete original edge exists; cap candidate count to avoid quadratic
+    # runtime on detailed CAD solids.
+    if not direct_helices and len(partials) <= 400:
+        helices = _join_helix_segments(partials, axis, origin, shaft_radius)
     for points, evidence in helices:
         if mesh_points is not None and not _helix_on_shaft(
                 points, axis, origin, profile, mesh_points):
@@ -859,6 +864,7 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             continue
         return {**evidence, "verified": True, "edges_examined": examined,
                 "helix_candidates": len(helices),
+                "direct_helix_candidates": len(direct_helices),
                 "material_evidence": material, "tooth_evidence": teeth,
                 "phase_evidence": phase, "section_count": section["sections"],
                 "method": "brep_segmented_helix_and_meridian_teeth"}
@@ -1051,7 +1057,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v27"
+        if (report.get("algorithm_version") != "phillips-geometry-v28"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -1109,7 +1115,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v27":
+            if old.get("algorithm_version") == "phillips-geometry-v28":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -1122,7 +1128,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v27",
+            "algorithm_version": "phillips-geometry-v28",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
