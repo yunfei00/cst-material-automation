@@ -969,6 +969,14 @@ def recognize_step(path: str | Path) -> dict:
         verdict = "OTHER"
     else:
         verdict = "OTHER"
+    stages = {
+        "coaxial": coaxial["verified"],
+        "head_shaft": stepped,
+        "single_head": profile["verified"],
+        "solid_core": core["verified"],
+        "modeled_external_thread": thread["verified"],
+    }
+    rejection_stage = next((name for name, passed in stages.items() if not passed), None)
     score = 100 if verdict != "OTHER" else 0
     return {"verdict": verdict,
             "score": score, "evidence": [
@@ -977,6 +985,8 @@ def recognize_step(path: str | Path) -> dict:
                 coaxial["reason"], profile["reason"], core["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
             "topology_evidence": topology,
+            "recognition_stages": stages,
+            "rejection_stage": rejection_stage,
             "head_shaft_supported": stepped,
             "coaxial_verified": coaxial["verified"],
             "coaxial_evidence": coaxial,
@@ -1011,7 +1021,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v24"
+        if (report.get("algorithm_version") != "phillips-geometry-v25"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -1069,7 +1079,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v24":
+            if old.get("algorithm_version") == "phillips-geometry-v25":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -1082,7 +1092,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v24",
+            "algorithm_version": "phillips-geometry-v25",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
