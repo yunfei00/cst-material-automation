@@ -209,3 +209,18 @@ def test_edge_grooves_are_lower_shelves_not_center_trough():
     assert battery.edge_groove_profile([cell], bbox)["status"] == "DETECTED"
     assert battery.edge_groove_profile([BRepPrimAPI_MakeBox(100, 40, 5).Solid()],
                                        bbox)["status"] == "NOT_DETECTED"
+
+
+def test_edge_grooves_accept_outer_rims_with_inner_troughs():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+    from OCP.gp import gp_Pnt
+
+    def block(y0, y1, z):
+        return BRepPrimAPI_MakeBox(gp_Pnt(0, y0, 0),
+                                   gp_Pnt(100, y1, z)).Solid()
+    shape = block(0, 40, 3)
+    for y0, y1 in ((0, 5), (11, 29), (35, 40)):
+        shape = BRepAlgoAPI_Fuse(shape, block(y0, y1, 5)).Shape()
+    result = battery.edge_groove_profile([shape], [0, 0, 0, 100, 40, 5])
+    assert result["status"] == "DETECTED"
