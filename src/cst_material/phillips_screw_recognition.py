@@ -224,7 +224,7 @@ def _identify_head_shaft(cylinders, axis, *, tolerance=0.02):
 
 
 def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
-                           radial_tolerance=0.02):
+                           radial_tolerance=0.02, min_radius_ratio=0.2):
     """Check actual 3D axis lines, not merely parallel directions.
 
     Angular tolerance is in radians; radial tolerance is in model units (mm).
@@ -237,7 +237,9 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
     reference = _unit(head["direction"])
     if reference is None:
         return {"verified": False, "reason": "头部轴向无效", "checked": 0}
-    structural = list(enumerate(cylinders))
+    minimum_radius = head["radius"] * min_radius_ratio
+    structural = [(index, candidate) for index, candidate in enumerate(cylinders)
+                  if candidate["radius"] >= minimum_radius]
     failures = []
     max_angle = 0.0
     max_offset = 0.0
@@ -260,7 +262,8 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
         "verified": not failures,
         "reason": "主体圆柱面共轴" if not failures else "主体存在偏轴或倾斜圆柱面",
         "checked": len(structural),
-        "ignored_small_cylinders": 0,
+        "ignored_small_cylinders": len(cylinders) - len(structural),
+        "minimum_radius": round(minimum_radius, 6),
         "failed_indices": failures,
         "max_angle_deg": round(math.degrees(max_angle), 5),
         "max_offset_mm": round(max_offset, 6),
