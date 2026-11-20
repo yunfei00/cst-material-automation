@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v6"
+VERSION = "battery-geometry-v7"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -166,9 +166,10 @@ def recognize_step(path: Path) -> dict:
     metrics = geometry_metrics(solids)
     dimensions, normal = _oriented_dimensions(solids, with_normal=True)
     volume = float(metrics["volume_mm3"])
-    box_volume = math.prod(dimensions)
+    aabb_dimensions = sorted((float(v) for v in metrics["dimensions_mm"]), reverse=True)
+    box_volume = math.prod(aabb_dimensions)
     fill = volume / box_volume if box_volume > 0 else 0.0
-    verdict = shape_verdict(volume=volume, dimensions=dimensions, fill=fill,
+    verdict = shape_verdict(volume=volume, dimensions=aabb_dimensions, fill=fill,
                             solid_count=len(solids))
     pocket = cavity_profile(solids, metrics["bbox_mm"])
     return {
@@ -177,10 +178,12 @@ def recognize_step(path: Path) -> dict:
         "expansion_structure_shape": pocket["status"] == "DETECTED",
         "volume_mm3": volume,
         "obb_dimensions_mm": dimensions,
+        "aabb_dimensions_mm": aabb_dimensions,
+        "fill_method": "brep_aabb",
         "bbox_mm": metrics["bbox_mm"],
         "plane_normal": normal,
-        "length_width_ratio": dimensions[0] / dimensions[1],
-        "flatness": dimensions[2] / math.sqrt(dimensions[0] * dimensions[1]),
+        "length_width_ratio": aabb_dimensions[0] / aabb_dimensions[1],
+        "flatness": aabb_dimensions[2] / math.sqrt(aabb_dimensions[0] * aabb_dimensions[1]),
         "fill_ratio": fill,
         "solid_body_count": len(solids),
         "identity_confirmed": False,
@@ -195,7 +198,8 @@ def compatible_pair(first, second):
     A second plausible rectangle alone is not sufficient evidence of two cells.
     """
     try:
-        a, b = first["obb_dimensions_mm"], second["obb_dimensions_mm"]
+        a = first.get("aabb_dimensions_mm", first["obb_dimensions_mm"])
+        b = second.get("aabb_dimensions_mm", second["obb_dimensions_mm"])
         na, nb = first["plane_normal"], second["plane_normal"]
         ba, bb = first["bbox_mm"], second["bbox_mm"]
         if any(len(v) != n for v, n in ((a, 3), (b, 3), (na, 3),
