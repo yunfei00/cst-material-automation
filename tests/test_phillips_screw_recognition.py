@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v23",
+        "algorithm_version": "phillips-geometry-v24",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -494,3 +494,28 @@ def test_helix_rejects_large_lens_barrel_but_accepts_shaft_crest():
     )
     assert screw["verified"]
     assert not lens["verified"]
+
+
+def test_join_helix_segments_reconstructs_split_edge():
+    from cst_material.phillips_screw_recognition import _join_helix_segments
+
+    helix = [(0.7 * math.cos(t), 0.7 * math.sin(t), t / (2 * math.pi))
+             for t in [4 * math.pi * i / 192 for i in range(193)]]
+    pieces = [helix[i:i + 33] for i in range(0, 192, 32)]
+    found = _join_helix_segments(
+        pieces, (0, 0, 1), (0, 0, 0), 0.55, head_radius=1.4,
+    )
+    assert found
+    assert found[0][1]["verified"]
+
+
+def test_join_helix_segments_does_not_bridge_large_gap():
+    from cst_material.phillips_screw_recognition import _join_helix_segments
+
+    helix = [(0.7 * math.cos(t), 0.7 * math.sin(t), t / (2 * math.pi))
+             for t in [4 * math.pi * i / 192 for i in range(193)]]
+    found = _join_helix_segments(
+        [helix[:40], helix[100:140]], (0, 0, 1), (0, 0, 0),
+        0.55, head_radius=1.4,
+    )
+    assert not found
