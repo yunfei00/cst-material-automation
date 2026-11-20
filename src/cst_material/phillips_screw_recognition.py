@@ -834,40 +834,49 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
         else:
             # Preserve fragments only for fallback reconstruction.
             partials.append(fragment)
+    # Validate complete edges first, without allowing fragment joining to
+    # modify them. If none passes the downstream geometry checks, a separate
+    # reconstruction pass may still recover fragmented threads.
     helices = direct_helices
-    # Never contaminate verified original edges. Reconstruct only if no
-    # complete original edge exists; cap candidate count to avoid quadratic
-    # runtime on detailed CAD solids.
-    if not direct_helices and len(partials) <= 400:
-        helices = _join_helix_segments(partials, axis, origin, shaft_radius)
-    for points, evidence in helices:
-        if mesh_points is not None and not _helix_on_shaft(
-                points, axis, origin, profile, mesh_points):
-            continue
-        phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
-        if not phase["verified"]:
-            continue
-        teeth = _thread_tooth_flanks(section["profiles"], points, axis, origin,
-                                    evidence["pitch_mm"])
-        if not teeth["verified"]:
-            continue
-        # Derive crest allowance from measured tooth relief, not from an
-        # arbitrary midpoint between the nominal shaft and the head.
-        relief = min(item["min_relief_mm"] for item in teeth["section_details"])
-        radial = [math.sqrt(max(0.0, _dot(delta, delta) - _dot(delta, axis) ** 2))
-                  for point in points
-                  for delta in [tuple(point[i] - origin[i] for i in range(3))]]
-        if max(radial) > shaft_radius + 2 * relief + 0.02:
-            continue
-        material = _external_thread_material(solids, points, axis, origin)
-        if not material["verified"]:
-            continue
-        return {**evidence, "verified": True, "edges_examined": examined,
-                "helix_candidates": len(helices),
-                "direct_helix_candidates": len(direct_helices),
-                "material_evidence": material, "tooth_evidence": teeth,
-                "phase_evidence": phase, "section_count": section["sections"],
-                "method": "brep_segmented_helix_and_meridian_teeth"}
+    reconstructed = None
+    def reconstructed_candidates():
+        nonlocal reconstructed
+        if reconstructed is None:
+            reconstructed = (_join_helix_segments(partials, axis, origin, shaft_radius)
+                             if len(partials) <= 400 else [])
+        return reconstructed
+
+    for candidate_pass in (0, 1):
+        if candidate_pass:
+            helices = reconstructed_candidates()
+        for points, evidence in helices:
+            if mesh_points is not None and not _helix_on_shaft(
+                    points, axis, origin, profile, mesh_points):
+                continue
+            phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
+            if not phase["verified"]:
+                continue
+            teeth = _thread_tooth_flanks(section["profiles"], points, axis, origin,
+                                        evidence["pitch_mm"])
+            if not teeth["verified"]:
+                continue
+            # Derive crest allowance from measured tooth relief, not from an
+            # arbitrary midpoint between the nominal shaft and the head.
+            relief = min(item["min_relief_mm"] for item in teeth["section_details"])
+            radial = [math.sqrt(max(0.0, _dot(delta, delta) - _dot(delta, axis) ** 2))
+                      for point in points
+                      for delta in [tuple(point[i] - origin[i] for i in range(3))]]
+            if max(radial) > shaft_radius + 2 * relief + 0.02:
+                continue
+            material = _external_thread_material(solids, points, axis, origin)
+            if not material["verified"]:
+                continue
+            return {**evidence, "verified": True, "edges_examined": examined,
+                    "helix_candidates": len(helices),
+                    "direct_helix_candidates": len(direct_helices),
+                    "material_evidence": material, "tooth_evidence": teeth,
+                    "phase_evidence": phase, "section_count": section["sections"],
+                    "method": "brep_segmented_helix_and_meridian_teeth"}
     return {"verified": False, "edges_examined": examined,
             "reason": "未同时确认螺旋线与真实截面牙型",
             "method": "brep_helix_and_meridian_teeth"}
@@ -1057,7 +1066,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v28"
+        if (report.get("algorithm_version") != "phillips-geometry-v29"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -1115,7 +1124,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v28":
+            if old.get("algorithm_version") == "phillips-geometry-v29":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -1128,7 +1137,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v28",
+            "algorithm_version": "phillips-geometry-v29",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
