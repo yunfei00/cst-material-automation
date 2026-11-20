@@ -165,7 +165,7 @@ geometry_features.sqlite3
 - 前后歧义是否诚实保留；
 - 首次扫描耗时、缓存复用时间和失败数量。
 
-完整步骤见 [手机屏幕识别实机验收](../display-recognition-verification.md)。
+操作和实机复核步骤见 [操作手册](../workflow.md)。
 
 ## 9. 版本状态
 
