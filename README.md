@@ -1,5 +1,9 @@
 # CST Material Automation
 
+## 结构件识别算法文档
+
+所有结构件的几何识别原理、实现函数、误报漏报、测试与冻结版本统一维护在 [结构件识别算法目录](docs/structure-recognition/README.md)。当前已整理 [螺丝识别算法（v29）](docs/structure-recognition/screw.md)，后续每种结构件单独成文。
+
 ## 当前正确流程：逐 Solid 导出 STEP
 
 CST 2025 SP1 已验证 `STEP.Write("Component:Solid")` 可导出单个 Solid。**全量导出、断点续导、失败诊断和三维查看器操作统一参见 [逐 Solid STEP 全量导出操作手册](docs/per-solid-step-export-guide.md)**。旧的叶子组件级 STEP 导出流程已废弃，不要再按旧文档执行。
