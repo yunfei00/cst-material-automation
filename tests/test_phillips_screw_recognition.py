@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v16",
+        "algorithm_version": "phillips-geometry-v17",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -355,3 +355,25 @@ def test_helix_edge_does_not_require_shaft_radius_ratio():
     result = _helix_from_curve_points(points, (0, 0, 1), (0, 0, 0), 1.5)
     assert result["verified"]
     assert result["pitch_mm"] > 0
+
+
+def test_thread_section_rejects_smooth_cylinder():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+    from cst_material.phillips_screw_recognition import _brep_thread_evidence
+
+    solid = BRepPrimAPI_MakeCylinder(2.0, 8.0).Shape()
+    result = _brep_thread_evidence(
+        [solid], (0, 0, 1), (0, 0, 0), 2.0,
+        profile={"verified": True, "left_head": True},
+    )
+    assert not result["verified"]
+
+
+def test_head_shaft_accepts_small_but_distinct_radius_step():
+    cylinders = [
+        {"radius": 2.0, "area": 5.0, "axis_origin": (0, 0, 0)},
+        {"radius": 1.9, "area": 50.0, "axis_origin": (0, 0, 4)},
+    ]
+    _, shaft, verified = _identify_head_shaft(cylinders, (0, 0, 1))
+    assert verified
+    assert shaft["radius"] == 1.9
