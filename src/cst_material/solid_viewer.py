@@ -133,7 +133,7 @@ def launch_viewer(path: str | Path) -> int:
                 filters.addWidget(checkbox)
             left_layout.addLayout(filters)
             workers_row = QHBoxLayout()
-            workers_row.addWidget(QLabel("螺丝/定位销/电池识别进程数"))
+            workers_row.addWidget(QLabel("螺丝/定位销识别进程数"))
             self.fastener_workers = QSpinBox()
             self.fastener_workers.setRange(1, 16)
             try:
@@ -538,12 +538,12 @@ def launch_viewer(path: str | Path) -> int:
             self.refine_process = process
             self.search_results = {}
             self._filter_tree(self.search.text())
-            self.search_summary.setText("电池识别：正在启动后台扫描（最多 10 个 STEP，2 进程）")
+            self.search_summary.setText("电池识别：正在后台检查体积前 10 个 Solid")
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
             process.setArguments(["-m", "cst_material.battery_recognition",
                                   str(self.root), "--workers",
-                                  "2"])
+                                  "1"])
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
             pending = bytearray()
 
