@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v12"
+VERSION = "battery-geometry-v13"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -224,7 +224,13 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
                 continue
             bottom_z = max(a[height_axis], c[height_axis])
             for low, high in bottoms:
-                if low[width_axis] > left + eps or high[width_axis] < right - eps:
+                # Rounded transitions can inset the bottom face relative to
+                # the vertical walls. Compare the inset to the local groove
+                # width, never to a fixed millimetre tolerance.
+                inset_left = max(0.0, low[width_axis] - left)
+                inset_right = max(0.0, right - high[width_axis])
+                if (inset_left + inset_right >= separation
+                        or max(inset_left, inset_right) > separation * 0.5):
                     continue
                 if abs(low[height_axis] - bottom_z) > max(eps, spans[height_axis] * 0.05):
                     continue
@@ -432,9 +438,6 @@ def scan(folder, *, workers=1, progress=None):
     count = 1
     for index, task in enumerate(tasks):
         accept(*_one(task))
-        if ((index + 1) % 10 == 0 and
-                sum(rec.get("verdict") == "BATTERY_SHAPE" for rec in results.values()) >= 2):
-            break
     matches = [(sid, rec) for sid, rec in results.items()
                if rec.get("status") == "PASS" and rec.get("verdict") == "BATTERY_SHAPE"]
     def geometry_key(item):
