@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v10"
+VERSION = "battery-geometry-v11"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -163,78 +163,67 @@ def cavity_profile(solids, bbox, *, grid=13):
 
 
 def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
-    """Detect two longitudinal recessed bands near opposite width edges.
+    """Identify narrow longitudinal edge faces from exact B-rep topology.
 
-    B-rep point classification measures actual top-surface depth profiles.
-    Axis-aligned for now: reject unknown orientation rather than claim proof.
+    This detects an edge feature (chamfer or recess), not a guaranteed groove.
+    No spatial rasterization: sub-millimetre faces remain available.
     """
-    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-    from OCP.gp import gp_Pnt
-    from OCP.TopAbs import TopAbs_IN, TopAbs_ON
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.Bnd import Bnd_Box
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
 
-    spans = [bbox[i + 3] - bbox[i] for i in range(3)]
+    spans = [float(bbox[i + 3] - bbox[i]) for i in range(3)]
     if any(not math.isfinite(v) or v <= 0 for v in spans):
         return {"status": "UNAVAILABLE", "reason": "invalid bbox"}
-    length_axis, width_axis, height_axis = sorted(range(3), key=lambda i: spans[i], reverse=True)
-    classifiers = [BRepClass3d_SolidClassifier(s) for s in solids]
-    def occupied(coords):
-        p = gp_Pnt(*coords)
-        for classifier in classifiers:
-            classifier.Perform(p, 1e-7)
-            if classifier.State() in (TopAbs_IN, TopAbs_ON):
-                return True
-        return False
+    length_axis, width_axis, height_axis = sorted(
+        range(3), key=lambda i: spans[i], reverse=True)
+    faces = []
+    for solid in solids:
+        explorer = TopExp_Explorer(solid, TopAbs_FACE)
+        while explorer.More():
+            face = (getattr(TopoDS, "Face_s", None) or TopoDS.Face)(
+                explorer.Current())
+            box = Bnd_Box()
+            BRepBndLib.Add_s(face, box)
+            bounds = box.Get()
+            extent = [bounds[i + 3] - bounds[i] for i in range(3)]
+            center = [(bounds[i + 3] + bounds[i]) / 2 for i in range(3)]
+            adaptor = BRepAdaptor_Surface(face)
+            faces.append((face, extent, center, adaptor.GetType()))
+            explorer.Next()
 
-    # Surface profile: highest occupied level, with a lower bound at the
-    # exact bbox bottom. A groove is a depression bounded by higher shoulders.
-    depths = []
-    for section in range(length_sections):
-        coords = [bbox[i] + spans[i] * 0.5 for i in range(3)]
-        coords[length_axis] = bbox[length_axis] + spans[length_axis] * (section + 1) / (length_sections + 1)
-        heights = []
-        for col in range(width_samples):
-            coords[width_axis] = bbox[width_axis] + spans[width_axis] * (col + 0.5) / width_samples
-            highest = None
-            for layer in range(32, -1, -1):
-                coords[height_axis] = bbox[height_axis] + spans[height_axis] * (layer + 0.25) / 33
-                if occupied(coords):
-                    highest = layer
-                    break
-            heights.append(highest)
-        # Two-sided recess topology, independent of whether the center or
-        # the outer rim is higher. A side must differ from the central
-        # plateau and the difference must persist along the cell length.
-        center = [h for h in heights[width_samples // 3:width_samples * 2 // 3]
-                  if h is not None]
-        if len(center) < 3:
-            depths.append([False, False])
+    # Narrow faces running along the long axis, near opposite width edges.
+    # Reject the four large side faces of a plain cuboid by requiring the
+    # feature to occupy only a small part of the height or width.
+    side_faces = [[], []]
+    for face, extent, center, surface_type in faces:
+        if extent[length_axis] < spans[length_axis] * 0.5:
             continue
-        center.sort()
-        plateau = center[len(center) // 2]
-        bands = []
-        for left, right in ((1, width_samples // 4),
-                            (width_samples * 3 // 4, width_samples - 1)):
-            side = [h for h in heights[left:right] if h is not None]
-            # Lower edge shelves OR an interior trough with an outer rim.
-            lowered = (len(side) >= 2 and
-                       sum(h <= plateau - 2 for h in side) >= max(2, len(side) // 2))
-            trough = False
-            for j in range(left, right):
-                h = heights[j]
-                if h is None:
-                    continue
-                outer = [v for v in heights[max(0, j - 4):j] if v is not None]
-                inner = [v for v in heights[j + 1:min(width_samples, j + 5)] if v is not None]
-                if outer and inner and max(outer) >= h + 2 and max(inner) >= h + 2:
-                    trough = True
-                    break
-            bands.append(lowered or trough)
-        depths.append(bands)
-    both = sum(all(section) for section in depths)
-    return {"status": "DETECTED" if both >= 3 else "NOT_DETECTED",
-            "method": "brep_bilateral_longitudinal_recess_topology",
-            "sections_with_both_grooves": both, "sections_checked": length_sections,
-            "width_samples": width_samples}
+        if extent[width_axis] >= spans[width_axis] * 0.15:
+            continue
+        if extent[height_axis] >= spans[height_axis] * 0.85:
+            continue
+        position = (center[width_axis] - bbox[width_axis]) / spans[width_axis]
+        if position < 0.20:
+            side_faces[0].append(face)
+        elif position > 0.80:
+            side_faces[1].append(face)
+
+    # Each feature must be a genuine separate B-rep face. Report evidence
+    # rather than asserting an actual concave groove from a chamfer.
+    detected = all(side_faces)
+    return {
+        "status": "DETECTED" if detected else "NOT_DETECTED",
+        "method": "brep_narrow_bilateral_longitudinal_faces",
+        "feature_kind": "edge_feature_not_proven_concave_groove",
+        "left_feature_faces": len(side_faces[0]),
+        "right_feature_faces": len(side_faces[1]),
+        "sections_with_both_grooves": int(detected),
+        "sections_checked": 1,
+    }
 
 
 
