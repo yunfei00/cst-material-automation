@@ -573,10 +573,12 @@ def _thread_tooth_flanks(profiles, helix_points, axis, origin, pitch, *,
 
 
 def _helix_on_shaft(points, axis, origin, profile, mesh_points, *, tolerance=0.02):
-    """Require the entire helix to lie on the shaft side of the head.
+    """Require the thread to occupy the *narrow shaft*, not a head-side barrel.
 
-    This excludes real threads on a large lens barrel or a screw head without
-    imposing an arbitrary 25% exclusion zone near the head.
+    A first small decrease in radius is not a head/shaft boundary: chamfers,
+    lens shoulders and curved front faces all create such decreases. Instead
+    determine the head region from its measured axial radius envelope and
+    require the thread to be beyond the complete head-side wide region.
     """
     direction = _unit(axis)
     if direction is None or not mesh_points or not points or not profile.get("verified"):
@@ -592,32 +594,39 @@ def _helix_on_shaft(points, axis, origin, profile, mesh_points, *, tolerance=0.0
     span = high - low
     if span <= tolerance:
         return False
-    bins = 48
+    bins = 64
     envelope = [[] for _ in range(bins)]
     for z, radius in projected:
         idx = min(bins - 1, int((z - low) / span * bins))
         envelope[idx].append(radius)
     radii = [max(row) if row else None for row in envelope]
-    # Determine the head/shaft transition from the largest contiguous
-    # head-end envelope. Use the minimum head envelope, not an assumed
-    # head-to-shaft radius ratio.
+    observed = [r for r in radii if r is not None]
+    if len(observed) < bins // 2:
+        return False
+    # A head must be measurably wider than the stable shaft. Do not infer a
+    # shoulder from an end chamfer or an optical lens surface.
+    head_radius = profile.get("head_radius", max(observed))
+    shaft_radius = profile.get("shaft_radius")
+    if shaft_radius is None:
+        shaft_radius = sorted(observed)[len(observed) // 3]
+    if head_radius <= shaft_radius + tolerance:
+        return False
+    boundary_radius = (head_radius + shaft_radius) / 2
     head_left = profile.get("left_head", False)
-    head_indices = range(bins) if head_left else range(bins - 1, -1, -1)
-    reference = next((radii[i] for i in head_indices if radii[i] is not None), None)
-    if reference is None:
+    # Require at least two adjacent wide slices to define the head, and find
+    # the last wide slice on the head side. This excludes a thread on the
+    # purported head even when a lens shoulder occurs before the thread.
+    head_window = range(0, bins // 2) if head_left else range(bins // 2, bins)
+    wide = [i for i in head_window
+            if radii[i] is not None and radii[i] >= boundary_radius]
+    if len(wide) < 2:
         return False
-    transition = None
-    for i in head_indices:
-        if radii[i] is not None and radii[i] < reference - tolerance:
-            transition = i
-            break
-    if transition is None:
-        return False
+    boundary = max(wide) if head_left else min(wide)
     heights = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
                for p in points]
     if head_left:
-        return min(heights) >= low + transition * span / bins - tolerance
-    return max(heights) <= low + (transition + 1) * span / bins + tolerance
+        return min(heights) >= low + (boundary + 1) * span / bins - tolerance
+    return max(heights) <= low + boundary * span / bins + tolerance
 
 
 def _external_thread_material(solids, points, axis, origin, *, tolerance=1e-5):
@@ -971,6 +980,7 @@ def recognize_step(path: str | Path) -> dict:
                                        head_radius, shaft["radius"])
         if profile["verified"]:
             profile["head_radius"] = head_radius
+            profile["shaft_radius"] = shaft["radius"]
             core = _solid_axis_core(solids, points, axis, shaft["axis_origin"],
                                     profile)
     pin = _locating_pin_steps(cylinders, axis)
@@ -1041,7 +1051,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v26"
+        if (report.get("algorithm_version") != "phillips-geometry-v27"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -1099,7 +1109,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v26":
+            if old.get("algorithm_version") == "phillips-geometry-v27":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -1112,7 +1122,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v26",
+            "algorithm_version": "phillips-geometry-v27",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
