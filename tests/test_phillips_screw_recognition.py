@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v28",
+        "algorithm_version": "phillips-geometry-v29",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -540,16 +540,21 @@ def test_helix_on_shaft_rejects_head_region_thread():
     assert _helix_on_shaft(shaft_thread, axis, origin, profile, mesh)
 
 
-def test_individual_helix_survives_nonhelical_neighbors():
+
+def test_verified_helices_are_independent_of_radius_and_neighbor_edges():
     from cst_material.phillips_screw_recognition import _helix_from_curve_points
 
-    good = [(0.75 * math.cos(t), 0.75 * math.sin(t), 0.15 * t)
-            for t in [8 * math.pi * i / 96 for i in range(97)]]
-    evidence = _helix_from_curve_points(good, (0, 0, 1), (0, 0, 0), 0.75)
-    assert evidence["verified"]
-    assert evidence["turns"] == 4.0
-    # Adjacent non-helical edge must never be used to replace the
-    # already verified original helix.
-    bad = [(0.75 + i * 0.01, 0.0, good[-1][2])
-           for i in range(97)]
-    assert not _helix_from_curve_points(bad, (0, 0, 1), (0, 0, 0), 0.75)["verified"]
+    # Geometric invariance across multiple radii and turn counts; these are
+    # synthetic constructions, not dimensions of known customer parts.
+    for radius in (0.3, 1.2, 4.8):
+        for turns in (1.5, 3.0, 6.0):
+            good = [(radius * math.cos(t), radius * math.sin(t), radius * 0.1 * t)
+                    for t in [turns * 2 * math.pi * i / 192 for i in range(193)]]
+            evidence = _helix_from_curve_points(
+                good, (0, 0, 1), (0, 0, 0), radius)
+            assert evidence["verified"]
+            assert abs(evidence["turns"] - turns) < 0.01
+            neighbor = [(radius + i * radius * 0.01, 0.0, good[-1][2])
+                        for i in range(97)]
+            assert not _helix_from_curve_points(
+                neighbor, (0, 0, 1), (0, 0, 0), radius)["verified"]
