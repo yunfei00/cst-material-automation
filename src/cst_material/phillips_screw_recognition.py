@@ -10,6 +10,8 @@ import hashlib
 import itertools
 import json
 import math
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import sqlite3
 from collections import Counter
 from pathlib import Path
@@ -611,7 +613,32 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
 
 
-def scan(folder: str | Path, *, progress=None) -> dict:
+def recommended_workers(task_count: int, *, cpu_count=None, available_memory=None) -> int:
+    """Bound CPU-heavy OCP workers by CPU, free memory and pending work."""
+    cpus = cpu_count if cpu_count is not None else (os.cpu_count() or 1)
+    if available_memory is None:
+        try:
+            import psutil
+            available_memory = psutil.virtual_memory().available
+        except ImportError:
+            available_memory = None
+    # Reserve 1 GiB for the UI/OS and budget 1 GiB per independent STEP reader.
+    memory_limit = (max(1, (available_memory - 1024**3) // 1024**3)
+                    if available_memory is not None else 4)
+    return max(1, min(task_count or 1, max(1, cpus - 1), memory_limit, 8))
+
+
+def _recognize_one(task):
+    """Worker only reads a single STEP; never touches the shared report."""
+    sid, path, digest = task
+    try:
+        return sid, {"status": "PASS", "sha256": digest, **recognize_step(path)}
+    except Exception as exc:  # noqa: BLE001
+        return sid, {"status": "FAIL", "sha256": digest,
+                     "error": f"{type(exc).__name__}: {exc}"}
+
+
+def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     root = Path(folder).resolve(strict=True)
     db = root / "geometry_features.sqlite3"
     if not db.is_file():
@@ -619,16 +646,14 @@ def scan(folder: str | Path, *, progress=None) -> dict:
     with sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True) as connection:
         rows = connection.execute("SELECT solid_id,step FROM solids WHERE status='PASS'").fetchall()
     signature, _ = source_signature(root)
+    cache = root / "phillips_screw_recognition.json"
     complete = complete_cached_report(root)
     if complete is not None:
         summary = complete["summary"]
         if progress:
             progress(len(rows), len(rows), summary)
-        return {"summary": summary,
-                "output": str(root / "phillips_screw_recognition.json"),
-                "from_cache": True}
-    cache = root / "phillips_screw_recognition.json"
-    results = {}
+        return {"summary": summary, "output": str(cache), "from_cache": True}
+
     previous = {}
     if cache.is_file():
         try:
@@ -638,9 +663,37 @@ def scan(folder: str | Path, *, progress=None) -> dict:
         except (OSError, ValueError, TypeError):
             pass
     summary = Counter({"total": len(rows), "failed": 0, "reused": 0})
+    results = {}
+    tasks = []
     if progress:
         progress(0, len(rows), summary)
-    for i, (sid, relpath) in enumerate(rows, 1):
+
+    def save(complete_flag):
+        tmp = cache.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({
+            "algorithm_version": "phillips-geometry-v14",
+            "summary": dict(summary), "results": results,
+            "source_signature": signature, "complete": complete_flag,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(cache)
+
+    def accept(sid, record):
+        results[sid] = record
+        if record.get("status") == "PASS":
+            summary[record["verdict"]] += 1
+        else:
+            summary["failed"] += 1
+        done = len(results)
+        if progress and record.get("status") == "PASS" and record.get("verdict") in (
+                "PHILLIPS_SCREW", "LOCATING_PIN"):
+            progress(done, len(rows), summary, matched_id=sid,
+                     matched_verdict=record["verdict"])
+        if done % 20 == 0 or done == len(rows):
+            save(done == len(rows))
+        if progress and (done == 1 or done % 5 == 0 or done == len(rows)):
+            progress(done, len(rows), summary)
+
+    for sid, relpath in rows:
         try:
             path = (root / relpath).resolve()
             if not path.is_relative_to(root) or not path.is_file():
@@ -648,32 +701,37 @@ def scan(folder: str | Path, *, progress=None) -> dict:
             digest = sha256_file(path)
             cached = previous.get(sid)
             if cached and cached.get("sha256") == digest and cached.get("status") == "PASS":
-                record = cached
                 summary["reused"] += 1
+                accept(sid, cached)
             else:
-                record = {"status": "PASS", "sha256": digest, **recognize_step(path)}
-            summary[record["verdict"]] += 1
-        except Exception as exc:  # noqa: BLE001 - isolate malformed individual STEP solids
-            record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
-            summary["failed"] += 1
-        results[sid] = record
-        if progress and record.get("status") == "PASS" and record.get("verdict") in ("PHILLIPS_SCREW", "LOCATING_PIN"):
-            progress(i, len(rows), summary, matched_id=sid, matched_verdict=record["verdict"])
-        if i % 20 == 0 or i == len(rows):
-            tmp = cache.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"algorithm_version": "phillips-geometry-v14",
-                "summary": summary, "results": results,
-                "source_signature": signature, "complete": i == len(rows)},
-                ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(cache)
-        if progress and (i == 1 or i % 5 == 0 or i == len(rows)):
-            progress(i, len(rows), summary)
-    return {"summary": dict(summary), "output": str(cache)}
+                tasks.append((sid, str(path), digest))
+        except Exception as exc:  # noqa: BLE001
+            accept(sid, {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"})
 
+    count = recommended_workers(len(tasks)) if workers is None else max(1, min(workers, len(tasks) or 1))
+    if count == 1:
+        for task in tasks:
+            sid, record = _recognize_one(task)
+            accept(sid, record)
+    elif tasks:
+        # Spawn-safe top-level worker. The parent alone updates cache/UI.
+        with ProcessPoolExecutor(max_workers=count) as executor:
+            futures = {executor.submit(_recognize_one, task): task[0] for task in tasks}
+            for future in as_completed(futures):
+                sid = futures[future]
+                try:
+                    _, record = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    record = {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
+                accept(sid, record)
+    save(True)
+    return {"summary": dict(summary), "output": str(cache), "workers": count}
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="独立 STEP 螺丝几何识别")
     parser.add_argument("folder")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="并行进程数，默认根据 CPU 和内存自动选择")
     args = parser.parse_args(argv)
     def emit(i, n, summary, *, matched_id=None, matched_verdict=None):
         event = {"event": "match" if matched_id is not None else "progress",
@@ -685,7 +743,7 @@ def main(argv=None):
             event["verdict"] = matched_verdict
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
-    result = scan(args.folder, progress=emit)
+    result = scan(args.folder, progress=emit, workers=args.workers)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result["summary"]["failed"] else 0
 
