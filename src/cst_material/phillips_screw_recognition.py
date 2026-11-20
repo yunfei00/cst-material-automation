@@ -507,6 +507,54 @@ def _thread_phase_consistency(profiles, helix_points, axis, origin, *, tolerance
                        else "螺旋边与截面牙型相位不一致")}
 
 
+def _helix_on_shaft(points, axis, origin, profile, mesh_points, *, tolerance=0.02):
+    """Require the entire helix to lie on the shaft side of the head.
+
+    This excludes real threads on a large lens barrel or a screw head without
+    imposing an arbitrary 25% exclusion zone near the head.
+    """
+    direction = _unit(axis)
+    if direction is None or not mesh_points or not points or not profile.get("verified"):
+        return False
+    projected = []
+    for p in mesh_points:
+        delta = tuple(p[i] - origin[i] for i in range(3))
+        z = _dot(delta, direction)
+        r = math.sqrt(max(0.0, _dot(delta, delta) - z * z))
+        projected.append((z, r))
+    low = min(z for z, _ in projected)
+    high = max(z for z, _ in projected)
+    span = high - low
+    if span <= tolerance:
+        return False
+    bins = 48
+    envelope = [[] for _ in range(bins)]
+    for z, radius in projected:
+        idx = min(bins - 1, int((z - low) / span * bins))
+        envelope[idx].append(radius)
+    radii = [max(row) if row else None for row in envelope]
+    # Determine the head/shaft transition from the largest contiguous
+    # head-end envelope. Use the minimum head envelope, not an assumed
+    # head-to-shaft radius ratio.
+    head_left = profile.get("left_head", False)
+    head_indices = range(bins) if head_left else range(bins - 1, -1, -1)
+    reference = next((radii[i] for i in head_indices if radii[i] is not None), None)
+    if reference is None:
+        return False
+    transition = None
+    for i in head_indices:
+        if radii[i] is not None and radii[i] < reference - tolerance:
+            transition = i
+            break
+    if transition is None:
+        return False
+    heights = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
+               for p in points]
+    if head_left:
+        return min(heights) >= low + transition * span / bins - tolerance
+    return max(heights) <= low + (transition + 1) * span / bins + tolerance
+
+
 def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                           mesh_points=None, profile=None):
     """Require a helical edge and independently measured external tooth relief."""
@@ -537,6 +585,9 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                 points.append((p.X(), p.Y(), p.Z()))
             evidence = _helix_from_curve_points(points, axis, origin, shaft_radius)
             if not evidence["verified"]:
+                continue
+            if mesh_points is not None and not _helix_on_shaft(
+                    points, axis, origin, profile, mesh_points):
                 continue
             # Match a helical ridge to actual radial relief at its axial
             # position, without requiring a fixed fraction of the part length.
@@ -721,7 +772,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v19"
+        if (report.get("algorithm_version") != "phillips-geometry-v20"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -779,7 +830,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v19":
+            if old.get("algorithm_version") == "phillips-geometry-v20":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -792,7 +843,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v19",
+            "algorithm_version": "phillips-geometry-v20",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
