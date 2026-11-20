@@ -71,3 +71,30 @@ def test_oriented_dimensions_on_real_occt_box():
     assert len(dimensions) == 3
     assert dimensions[0] > dimensions[1] > dimensions[2]
     assert all(value > 0 for value in dimensions)
+
+
+def test_top_ten_and_single_result(tmp_path, monkeypatch):
+    db = tmp_path / "geometry_features.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE solids (solid_id TEXT, step TEXT, status TEXT, features_json TEXT, step_sha256 TEXT)")
+        for i in range(15):
+            name = f"solid-{i:02d}"
+            (tmp_path / f"{name}.step").write_text(name)
+            conn.execute("INSERT INTO solids VALUES (?,?,?,?,?)",
+                         (name, f"{name}.step", "PASS",
+                          json.dumps({"volume_mm3": 15000 - i * 1000}), name))
+    monkeypatch.setattr(battery, "source_signature", lambda _: ("signature-15", 15))
+    called = []
+    def fake(task):
+        sid, _, digest = task
+        called.append(sid)
+        return sid, {"status": "PASS", "sha256": digest, "verdict": "BATTERY_SHAPE",
+                     "fill_ratio": 0.85, "length_width_ratio": 1.8,
+                     "flatness": 0.10, "volume_mm3": 1000}
+    monkeypatch.setattr(battery, "_one", fake)
+    result = battery.scan(tmp_path, workers=1)
+    assert len(called) == 10
+    assert result["summary"]["matched"] == 1
+    report = json.loads((tmp_path / "battery_recognition.json").read_text())
+    assert sum(rec.get("verdict") == "BATTERY_SHAPE"
+               for rec in report["results"].values()) == 1
