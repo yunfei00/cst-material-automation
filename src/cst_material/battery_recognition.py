@@ -168,8 +168,8 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
     Two vertical walls and a connecting low bottom must occur on each side.
     Small radii are allowed: no minimum groove width or raster resolution.
     """
-    from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
