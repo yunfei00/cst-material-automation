@@ -17,7 +17,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v2"
+VERSION = "battery-geometry-v3"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -161,7 +161,7 @@ def scan(folder, *, workers=8, progress=None):
             volume = 0
         ranked.append((volume, sid, relative, sha))
     ranked.sort(reverse=True)
-    limit = min(3, len(ranked))
+    limit = min(10, len(ranked))
     if progress:
         progress({"event": "phase", "message": f"体积排序完成：精查前 {limit} 个",
                   "total": len(rows), "candidates": limit})
@@ -182,9 +182,7 @@ def scan(folder, *, workers=8, progress=None):
             summary["failed"] += 1
         elif rec.get("verdict") == "BATTERY_SHAPE":
             summary["matched"] += 1
-            if progress:
-                progress({"event": "match", "solid_id": sid, "verdict": "BATTERY_SHAPE",
-                          "done": len(results), "total": len(rows)})
+
         if len(results) % 20 == 0 or len(results) == len(rows):
             save(len(results) == len(rows))
         if progress and (len(results) % 5 == 0 or len(results) == len(rows)):
@@ -226,6 +224,23 @@ def scan(folder, *, workers=8, progress=None):
                 except Exception as exc:  # noqa: BLE001
                     accept(futures[future], {"status": "FAIL",
                                             "error": f"{type(exc).__name__}: {exc}"})
+    matches = [(sid, rec) for sid, rec in results.items()
+               if rec.get("status") == "PASS" and rec.get("verdict") == "BATTERY_SHAPE"]
+    def geometry_key(item):
+        sid, rec = item
+        return (float(rec.get("fill_ratio", 0)),
+                -abs(float(rec.get("length_width_ratio", 0)) - 1.8),
+                -abs(float(rec.get("flatness", 0)) - 0.10),
+                float(rec.get("volume_mm3", 0)), sid)
+    winner = max(matches, key=geometry_key)[0] if matches else None
+    for sid, rec in matches:
+        if sid != winner:
+            rec["verdict"] = "OTHER"
+            rec["reason"] = "形态相符，但不是最佳电池形态匹配"
+    summary["matched"] = int(winner is not None)
+    if winner and progress:
+        progress({"event": "match", "solid_id": winner, "verdict": "BATTERY_SHAPE",
+                  "done": len(results), "total": len(rows)})
     save(True)
     return {"summary": dict(summary), "output": str(cache), "workers": count}
 
