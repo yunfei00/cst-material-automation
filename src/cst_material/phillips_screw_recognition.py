@@ -343,7 +343,7 @@ def _solid_axis_core(solids, points, axis, origin, profile, *, tolerance=1e-5):
     # Head is at one end; test multiple positions strictly inside the
     # opposite shaft portion, avoiding end faces, chamfers and recesses.
     head_at_low = profile["left_head"]
-    fractions = (0.65, 0.75, 0.85)
+    fractions = (0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
     sample_z = [low + (high - low) * (f if head_at_low else 1.0 - f)
                 for f in fractions]
     inside = []
@@ -798,7 +798,12 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             for i in range(97):
                 p = curve.Value(first + (last - first) * i / 96)
                 points.append((p.X(), p.Y(), p.Z()))
-            fragments.append(points)
+            # Discard planar rings and other constant-z edges before the
+            # quadratic fragment-joining step; these cannot form a helix.
+            heights = [_dot(tuple(p[i] - origin[i] for i in range(3)), axis)
+                       for p in points]
+            if max(heights) - min(heights) > 0.005:
+                fragments.append(points)
     # Whole-edge helices are included; fragments are also joined where CAD
     # split a continuous B-rep boundary into multiple tangent edges.
     helices = _join_helix_segments(
