@@ -43,7 +43,7 @@ from cst_material.structure_samples import (
 
 def launch_viewer(path: str | Path) -> int:
     import pyvista as pv
-    from PySide6.QtCore import QProcess, Qt
+    from PySide6.QtCore import QProcess, QSettings, Qt
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -79,6 +79,9 @@ def launch_viewer(path: str | Path) -> int:
             self.setWindowTitle("CST Solid 三维结构查看器（离线）")
             self.resize(1450, 850)
             self.root = target if target.is_dir() else None
+            config_path = Path.home() / ".cst_material" / "viewer.ini"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            self.settings = QSettings(str(config_path), QSettings.Format.IniFormat)
             self.records = []
             self.record_lookup = {}
             self.search_results = None
@@ -128,6 +131,18 @@ def launch_viewer(path: str | Path) -> int:
             for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only):
                 filters.addWidget(checkbox)
             left_layout.addLayout(filters)
+            workers_row = QHBoxLayout()
+            workers_row.addWidget(QLabel("螺丝/定位销识别进程数"))
+            self.fastener_workers = QSpinBox()
+            self.fastener_workers.setRange(1, 16)
+            try:
+                saved_workers = int(self.settings.value("fastener/workers", 8))
+            except (TypeError, ValueError):
+                saved_workers = 8
+            self.fastener_workers.setValue(max(1, min(16, saved_workers)))
+            self.fastener_workers.setToolTip("保存到 ~/.cst_material/viewer.ini；下次识别生效")
+            workers_row.addWidget(self.fastener_workers)
+            left_layout.addLayout(workers_row)
             left_layout.addWidget(self.group_button)
             threshold_row = QHBoxLayout()
             threshold_row.addWidget(QLabel("最低相似度"))
@@ -235,6 +250,8 @@ def launch_viewer(path: str | Path) -> int:
             self.shield_only.toggled.connect(self._toggle_shield_only)
             self.screw_only.toggled.connect(self._toggle_screw_only)
             self.pin_only.toggled.connect(self._toggle_pin_only)
+            self.fastener_workers.valueChanged.connect(
+                lambda count: self.settings.setValue("fastener/workers", count))
 
 
 
@@ -556,7 +573,8 @@ def launch_viewer(path: str | Path) -> int:
             self.search_summary.setText(f"正在识别{self._fastener_label()}；匹配的 Solid 会实时出现在左侧列表")
             process.setWorkingDirectory(str(self.root))
             process.setProgram(sys.executable)
-            process.setArguments(["-m", "cst_material.phillips_screw_recognition", str(self.root)])
+            process.setArguments(["-m", "cst_material.phillips_screw_recognition",
+                                  str(self.root), "--workers", str(self.fastener_workers.value())])
             process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
             pending = bytearray()
             unpainted = 0
