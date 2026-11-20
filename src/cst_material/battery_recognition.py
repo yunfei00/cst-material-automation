@@ -8,10 +8,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import sqlite3
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
@@ -205,19 +203,9 @@ def scan(folder, *, workers=1, progress=None):
     if progress:
         progress({"event": "phase", "message": f"正在并行精查 {len(tasks)} 个 STEP",
                   "done": len(results), "total": limit})
-    count = 1  # Battery scanning is intentionally sequential and memory-bounded.
-    if count == 1:
-        for task in tasks:
-            accept(*_one(task))
-    elif tasks:
-        with ProcessPoolExecutor(max_workers=count) as executor:
-            futures = {executor.submit(_one, task): task[0] for task in tasks}
-            for future in as_completed(futures):
-                try:
-                    accept(*future.result())
-                except Exception as exc:  # noqa: BLE001
-                    accept(futures[future], {"status": "FAIL",
-                                            "error": f"{type(exc).__name__}: {exc}"})
+    count = 1
+    for task in tasks:
+        accept(*_one(task))
     matches = [(sid, rec) for sid, rec in results.items()
                if rec.get("status") == "PASS" and rec.get("verdict") == "BATTERY_SHAPE"]
     def geometry_key(item):
