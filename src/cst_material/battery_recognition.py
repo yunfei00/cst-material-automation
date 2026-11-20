@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v11"
+VERSION = "battery-geometry-v12"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -163,15 +163,14 @@ def cavity_profile(solids, bbox, *, grid=13):
 
 
 def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
-    """Identify narrow longitudinal edge faces from exact B-rep topology.
+    """Detect a U-profile at both longitudinal edges using exact B-rep faces.
 
-    This detects an edge feature (chamfer or recess), not a guaranteed groove.
-    No spatial rasterization: sub-millimetre faces remain available.
+    Two vertical walls and a connecting low bottom must occur on each side.
+    Small radii are allowed: no minimum groove width or raster resolution.
     """
-    from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_Box
-    from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE
+    from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
 
@@ -189,40 +188,66 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
             box = Bnd_Box()
             BRepBndLib.Add_s(face, box)
             bounds = box.Get()
-            extent = [bounds[i + 3] - bounds[i] for i in range(3)]
-            center = [(bounds[i + 3] + bounds[i]) / 2 for i in range(3)]
-            adaptor = BRepAdaptor_Surface(face)
-            faces.append((face, extent, center, adaptor.GetType()))
+            faces.append(([bounds[i] for i in range(3)],
+                          [bounds[i + 3] for i in range(3)]))
             explorer.Next()
 
-    # Narrow faces running along the long axis, near opposite width edges.
-    # Reject the four large side faces of a plain cuboid by requiring the
-    # feature to occupy only a small part of the height or width.
-    side_faces = [[], []]
-    for face, extent, center, surface_type in faces:
-        if extent[length_axis] < spans[length_axis] * 0.5:
+    # Identify pairs of long, approximately vertical faces bracketing a
+    # narrow valley. The valley must have an independent low connecting face.
+    # Use B-rep face extents rather than the previous fixed sampling grid.
+    eps = max(1e-6, max(spans) * 1e-7)
+    walls = []
+    bottoms = []
+    for lo, hi in faces:
+        d = [hi[i] - lo[i] for i in range(3)]
+        if d[length_axis] < spans[length_axis] * 0.5:
             continue
-        if extent[width_axis] >= spans[width_axis] * 0.15:
-            continue
-        if extent[height_axis] >= spans[height_axis] * 0.85:
-            continue
-        position = (center[width_axis] - bbox[width_axis]) / spans[width_axis]
-        if position < 0.20:
-            side_faces[0].append(face)
-        elif position > 0.80:
-            side_faces[1].append(face)
+        if d[width_axis] <= eps and d[height_axis] > eps:
+            walls.append((lo, hi))
+        if d[height_axis] <= eps and d[width_axis] > eps:
+            bottoms.append((lo, hi))
 
-    # Each feature must be a genuine separate B-rep face. Report evidence
-    # rather than asserting an actual concave groove from a chamfer.
-    detected = all(side_faces)
+    side_hits = [0, 0]
+    for i, (a, b) in enumerate(walls):
+        for c, d in walls[i + 1:]:
+            left = (a[width_axis] + b[width_axis]) / 2
+            right = (c[width_axis] + d[width_axis]) / 2
+            if left > right:
+                left, right = right, left
+                a, b, c, d = c, d, a, b
+            separation = right - left
+            if separation <= eps or separation >= spans[width_axis] * 0.15:
+                continue
+            # The two walls must overlap in the longitudinal direction.
+            if min(b[length_axis], d[length_axis]) - max(
+                    a[length_axis], c[length_axis]) < spans[length_axis] * 0.5:
+                continue
+            bottom_z = max(a[height_axis if False else height_axis],
+                           c[height_axis])
+            for low, high in bottoms:
+                if low[width_axis] > left + eps or high[width_axis] < right - eps:
+                    continue
+                if abs(low[height_axis] - bottom_z) > max(eps, spans[height_axis] * 0.02):
+                    continue
+                if min(high[length_axis], b[length_axis], d[length_axis]) - max(
+                        low[length_axis], a[length_axis], c[length_axis]
+                ) < spans[length_axis] * 0.5:
+                    continue
+                center = (left + right) / 2
+                position = (center - bbox[width_axis]) / spans[width_axis]
+                if position < 0.20:
+                    side_hits[0] += 1
+                elif position > 0.80:
+                    side_hits[1] += 1
+                break
+
+    detected = all(side_hits)
     return {
         "status": "DETECTED" if detected else "NOT_DETECTED",
-        "method": "brep_narrow_bilateral_longitudinal_faces",
-        "feature_kind": "edge_feature_not_proven_concave_groove",
-        "left_feature_faces": len(side_faces[0]),
-        "right_feature_faces": len(side_faces[1]),
-        "sections_with_both_grooves": int(detected),
-        "sections_checked": 1,
+        "method": "brep_bilateral_u_profile_faces",
+        "left_u_profiles": side_hits[0],
+        "right_u_profiles": side_hits[1],
+        "feature_kind": "u_profile_with_two_walls_and_bottom",
     }
 
 
