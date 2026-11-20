@@ -528,8 +528,8 @@ def _thread_tooth_flanks(profiles, helix_points, axis, origin, pitch, *,
     for section in profiles:
         # Each section is a cloud from the two opposing half-planes; sort by
         # axial position and remove exact duplicates before looking at relief.
-        data = sorted(set((round(z, 5), round(r, 5)) for z, r in section
-                          if lo <= z <= hi and r > tolerance))
+        data = sorted({(round(z, 5), round(r, 5)) for z, r in section
+                       if lo <= z <= hi and r > tolerance})
         if len(data) < 12:
             continue
         # Repeated tooth geometry must exist at multiple distinct axial
