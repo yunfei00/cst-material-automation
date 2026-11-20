@@ -122,3 +122,63 @@ def search_similar_samples(
             })
     results.sort(key=lambda row: (-row["similarity"], row["sample_id"]))
     return results[:limit]
+
+
+def save_confirmed_samples_batch(
+    path: str | Path, entries: list[dict],
+) -> dict:
+    """Atomically append engineer-reviewed samples, rejecting conflicts."""
+    if not entries:
+        raise ValueError("至少选择一个已确认的 Solid")
+    target = Path(path)
+    data = load_samples(target)
+    existing = {item["sample_id"] for item in data["samples"]}
+    staged = []
+    seen = set()
+    for entry in entries:
+        sample_id = entry["sample_id"].strip()
+        part_type = entry["part_type"].strip()
+        if not sample_id or not part_type:
+            raise ValueError("样本 ID 和类别不能为空")
+        if sample_id in existing or sample_id in seen:
+            raise ValueError(f"样本已存在或重复：{sample_id}")
+        seen.add(sample_id)
+        staged.append({
+            "sample_id": sample_id, "part_type": part_type,
+            "approved": True, "source_sha256": entry.get("source_sha256", ""),
+            "features": extract_shape_features(entry["metrics"]),
+        })
+    data["samples"].extend(staged)
+    _write_samples_atomic(target, data)
+    return {"added": len(staged), "total": len(data["samples"])}
+
+
+def delete_confirmed_samples(path: str | Path, sample_ids: list[str]) -> dict:
+    """Remove only explicitly selected sample IDs; never silently relabel."""
+    if not sample_ids:
+        raise ValueError("未选择要删除的样本")
+    target = Path(path)
+    data = load_samples(target)
+    existing = {item["sample_id"] for item in data["samples"]}
+    missing = set(sample_ids) - existing
+    if missing:
+        raise ValueError(f"样本不存在：{sorted(missing)}")
+    selected = set(sample_ids)
+    data["samples"] = [
+        item for item in data["samples"] if item["sample_id"] not in selected
+    ]
+    _write_samples_atomic(target, data)
+    return {"deleted": len(selected), "total": len(data["samples"])}
+
+
+def _write_samples_atomic(target: Path, data: dict) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(prefix=".samples-", suffix=".tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, target)
+    finally:
+        Path(temp).unlink(missing_ok=True)
