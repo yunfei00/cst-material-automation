@@ -613,7 +613,7 @@ def launch_viewer(path: str | Path) -> int:
                         # completed matches remain visible even in this case.
                         pass
                     report = json.loads((self.root / "phillips_screw_recognition.json").read_text(encoding="utf-8"))
-                    if report.get("algorithm_version") != "phillips-geometry-v13":
+                    if report.get("algorithm_version") != "phillips-geometry-v14":
                         raise ValueError("螺丝结果缓存版本不匹配")
                     # Only use records from the current scan, never stale cached
                     # entries left over from a previous interrupted run.
