@@ -387,8 +387,7 @@ def _helix_from_curve_points(points, axis, origin, shaft_radius):
         angles.append(angle)
     turns = abs(angles[-1] - angles[0]) / (2 * math.pi)
     mean_r = sum(radii) / len(radii)
-    if (turns < 1.75 or not 0.55 * shaft_radius <= mean_r <= 1.45 * shaft_radius
-            or max(radii) - min(radii) > max(0.02, mean_r * 0.08)):
+    if (turns < 1.0 or max(radii) - min(radii) > max(0.02, mean_r * 0.08)):
         return {"verified": False, "turns": round(turns, 2),
                 "reason": "不满足杆部恒半径多圈螺旋"}
     mean_a = sum(angles) / len(angles)
@@ -636,7 +635,7 @@ def recognize_step(path: str | Path) -> dict:
     # A smooth two-level pin is ambiguous and must NOT default to screw.
     if structural and thread["verified"]:
         verdict = "PHILLIPS_SCREW"
-    elif structural and pin["verified"] and not thread.get("off_shaft_helix"):
+    elif structural and pin["verified"] and not thread.get("verified"):
         verdict = "LOCATING_PIN"
     else:
         verdict = "OTHER"
