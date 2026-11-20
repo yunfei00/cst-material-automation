@@ -681,6 +681,94 @@ def _external_thread_material(solids, points, axis, origin, *, tolerance=1e-5):
                        else "无法确认外螺纹实体侧或检测到内螺纹")}
 
 
+def _join_helix_segments(segments, axis, origin, shaft_radius, *,
+                         head_radius=None, gap=0.03):
+    """Join adjacent CAD edge fragments in cylindrical (theta,z,r) space.
+
+    Fragment endpoints must be geometrically coincident and their tangents
+    aligned. Never bridge an arbitrary missing section of a thread.
+    """
+    candidates = [list(points) for points in segments if len(points) >= 3]
+    chains = []
+    while candidates:
+        chain = candidates.pop(0)
+        changed = True
+        while changed:
+            changed = False
+            for index, other in enumerate(candidates):
+                for reverse_chain in (False, True):
+                    end = chain[0] if reverse_chain else chain[-1]
+                    neighbor = chain[1] if reverse_chain else chain[-2]
+                    for reverse_other in (False, True):
+                        fragment = list(reversed(other)) if reverse_other else other
+                        start, next_point = fragment[:2]
+                        distance = math.dist(end, start)
+                        if distance > gap:
+                            continue
+                        incoming = tuple(end[i] - neighbor[i] for i in range(3))
+                        outgoing = tuple(next_point[i] - start[i] for i in range(3))
+                        norm_a, norm_b = _unit(incoming), _unit(outgoing)
+                        if norm_a is None or norm_b is None or _dot(norm_a, norm_b) < 0.8:
+                            continue
+                        if reverse_chain:
+                            chain = list(reversed(chain))
+                        chain.extend(fragment[1:])
+                        candidates.pop(index)
+                        changed = True
+                        break
+                    if changed:
+                        break
+                if changed:
+                    break
+        chains.append(chain)
+    results = []
+    for chain in chains:
+        if len(chain) < 24:
+            continue
+        evidence = _helix_from_curve_points(
+            chain, axis, origin, shaft_radius, head_radius=head_radius)
+        if evidence["verified"]:
+            results.append((chain, evidence))
+    return results
+
+
+def _brep_face_adjacency(solids):
+    """Count shared B-rep edges and face adjacency without names or metadata."""
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    face_cast = getattr(TopoDS, "Face_s", None) or getattr(TopoDS, "Face", None)
+    faces = []
+    edge_faces = {}
+    for solid in solids:
+        explorer = TopExp_Explorer(solid, TopAbs_FACE)
+        while explorer.More():
+            face = face_cast(explorer.Current())
+            index = len(faces)
+            faces.append(face)
+            edges = TopExp_Explorer(face, TopAbs_EDGE)
+            while edges.More():
+                edge = edges.Current()
+                # IsSame is topology identity; HashCode wrappers are not
+                # stable across all OCP releases.
+                found = next((i for i, (representative, _) in enumerate(edge_faces.values())
+                              if representative.IsSame(edge)), None)
+                if found is None:
+                    edge_faces[len(edge_faces)] = (edge, {index})
+                else:
+                    edge_faces[found][1].add(index)
+                edges.Next()
+            explorer.Next()
+    neighbors = [set() for _ in faces]
+    for _, owners in edge_faces.values():
+        for i in owners:
+            neighbors[i].update(owners - {i})
+    return {"face_count": len(faces), "edge_count": len(edge_faces),
+            "adjacent_pairs": sum(len(group) for group in neighbors) // 2,
+            "isolated_faces": sum(not group for group in neighbors)}
+
+
 def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                           mesh_points=None, profile=None):
     """Require a helical edge and independently measured external tooth relief."""
@@ -695,6 +783,7 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
     if not section["verified"]:
         return section
     examined = 0
+    fragments = []
     for solid in solids:
         explorer = TopExp_Explorer(solid, TopAbs_EDGE)
         while explorer.More():
@@ -709,32 +798,31 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             for i in range(97):
                 p = curve.Value(first + (last - first) * i / 96)
                 points.append((p.X(), p.Y(), p.Z()))
-            evidence = _helix_from_curve_points(
-                points, axis, origin, shaft_radius,
-                head_radius=profile.get("head_radius"))
-            if not evidence["verified"]:
-                continue
-            if mesh_points is not None and not _helix_on_shaft(
-                    points, axis, origin, profile, mesh_points):
-                continue
-            # Match a helical ridge to actual radial relief at its axial
-            # position, without requiring a fixed fraction of the part length.
-            # Check actual teeth near the helix, not the global radius span:
-            # the latter could merely measure a head shoulder or end chamfer.
-            phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
-            if not phase["verified"]:
-                continue
-            teeth = _thread_tooth_flanks(section["profiles"], points, axis, origin,
-                                        evidence["pitch_mm"])
-            if not teeth["verified"]:
-                continue
-            material = _external_thread_material(solids, points, axis, origin)
-            if not material["verified"]:
-                continue
-            return {**evidence, "verified": True, "edges_examined": examined,
-                    "material_evidence": material, "tooth_evidence": teeth,
-                    "phase_evidence": phase, "section_count": section["sections"],
-                    "method": "brep_helix_and_meridian_teeth"}
+            fragments.append(points)
+    # Whole-edge helices are included; fragments are also joined where CAD
+    # split a continuous B-rep boundary into multiple tangent edges.
+    helices = _join_helix_segments(
+        fragments, axis, origin, shaft_radius,
+        head_radius=profile.get("head_radius"))
+    for points, evidence in helices:
+        if mesh_points is not None and not _helix_on_shaft(
+                points, axis, origin, profile, mesh_points):
+            continue
+        phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
+        if not phase["verified"]:
+            continue
+        teeth = _thread_tooth_flanks(section["profiles"], points, axis, origin,
+                                    evidence["pitch_mm"])
+        if not teeth["verified"]:
+            continue
+        material = _external_thread_material(solids, points, axis, origin)
+        if not material["verified"]:
+            continue
+        return {**evidence, "verified": True, "edges_examined": examined,
+                "helix_candidates": len(helices),
+                "material_evidence": material, "tooth_evidence": teeth,
+                "phase_evidence": phase, "section_count": section["sections"],
+                "method": "brep_segmented_helix_and_meridian_teeth"}
     return {"verified": False, "edges_examined": examined,
             "reason": "未同时确认螺旋线与真实截面牙型",
             "method": "brep_helix_and_meridian_teeth"}
@@ -794,6 +882,7 @@ def recognize_step(path: str | Path) -> dict:
     from OCP.TopoDS import TopoDS
 
     solids = read_step(path)
+    topology = _brep_face_adjacency(solids)
     axes = {}
     faces = []
     for solid in solids:
@@ -875,6 +964,7 @@ def recognize_step(path: str | Path) -> dict:
                 "检测到同轴变径头杆结构" if stepped else "未确认同轴变径头杆结构",
                 coaxial["reason"], profile["reason"], core["reason"]],
             "axis": axis, "cylinder_count": len(cylinders),
+            "topology_evidence": topology,
             "head_shaft_supported": stepped,
             "coaxial_verified": coaxial["verified"],
             "coaxial_evidence": coaxial,
@@ -909,7 +999,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v23"
+        if (report.get("algorithm_version") != "phillips-geometry-v24"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -967,7 +1057,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v23":
+            if old.get("algorithm_version") == "phillips-geometry-v24":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -980,7 +1070,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v23",
+            "algorithm_version": "phillips-geometry-v24",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
