@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v7"
+VERSION = "battery-geometry-v8"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -161,6 +161,69 @@ def cavity_profile(solids, bbox, *, grid=13):
             "grid": grid}
 
 
+
+def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
+    """Detect two longitudinal recessed bands near opposite width edges.
+
+    B-rep point classification measures actual top-surface depth profiles.
+    Axis-aligned for now: reject unknown orientation rather than claim proof.
+    """
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN, TopAbs_ON
+
+    spans = [bbox[i + 3] - bbox[i] for i in range(3)]
+    if any(not math.isfinite(v) or v <= 0 for v in spans):
+        return {"status": "UNAVAILABLE", "reason": "invalid bbox"}
+    length_axis, width_axis, height_axis = sorted(range(3), key=lambda i: spans[i], reverse=True)
+    classifiers = [BRepClass3d_SolidClassifier(s) for s in solids]
+    def occupied(coords):
+        p = gp_Pnt(*coords)
+        for classifier in classifiers:
+            classifier.Perform(p, 1e-7)
+            if classifier.State() in (TopAbs_IN, TopAbs_ON):
+                return True
+        return False
+
+    # Surface profile: highest occupied level, with a lower bound at the
+    # exact bbox bottom. A groove is a depression bounded by higher shoulders.
+    depths = []
+    for section in range(length_sections):
+        coords = [bbox[i] + spans[i] * 0.5 for i in range(3)]
+        coords[length_axis] = bbox[length_axis] + spans[length_axis] * (section + 1) / (length_sections + 1)
+        heights = []
+        for col in range(width_samples):
+            coords[width_axis] = bbox[width_axis] + spans[width_axis] * (col + 0.5) / width_samples
+            highest = None
+            for layer in range(32, -1, -1):
+                coords[height_axis] = bbox[height_axis] + spans[height_axis] * (layer + 0.25) / 33
+                if occupied(coords):
+                    highest = layer
+                    break
+            heights.append(highest)
+        # Compare local depressions to the adjacent interior and edge shoulder.
+        bands = []
+        for left, right in ((2, width_samples // 3), (width_samples * 2 // 3, width_samples - 2)):
+            found = False
+            for j in range(left, right):
+                h = heights[j]
+                if h is None:
+                    continue
+                before = [v for v in heights[max(0, j - 4):j] if v is not None]
+                after = [v for v in heights[j + 1:min(width_samples, j + 5)] if v is not None]
+                if before and after and max(before) >= h + 2 and max(after) >= h + 2:
+                    found = True
+                    break
+            bands.append(found)
+        depths.append(bands)
+    both = sum(all(section) for section in depths)
+    return {"status": "DETECTED" if both >= 3 else "NOT_DETECTED",
+            "method": "brep_two_edge_longitudinal_surface_recess",
+            "sections_with_both_grooves": both, "sections_checked": length_sections,
+            "width_samples": width_samples}
+
+
+
 def recognize_step(path: Path) -> dict:
     solids = read_step(path)
     metrics = geometry_metrics(solids)
@@ -169,9 +232,16 @@ def recognize_step(path: Path) -> dict:
     aabb_dimensions = sorted((float(v) for v in metrics["dimensions_mm"]), reverse=True)
     box_volume = math.prod(aabb_dimensions)
     fill = volume / box_volume if box_volume > 0 else 0.0
-    verdict = shape_verdict(volume=volume, dimensions=aabb_dimensions, fill=fill,
-                            solid_count=len(solids))
-    pocket = cavity_profile(solids, metrics["bbox_mm"])
+    # Broad rectangular envelope; ultra-thin cells are not rejected by a flatness floor.
+    rectangular = (len(solids) == 1 and volume > 0 and
+                   all(v > 0 for v in aabb_dimensions) and
+                   aabb_dimensions[0] > aabb_dimensions[1] > aabb_dimensions[2] and
+                   0.68 <= fill <= 1.01)
+    verdict = "BATTERY_SHAPE" if rectangular else "OTHER"
+    pocket = (edge_groove_profile(solids, metrics["bbox_mm"]) if rectangular
+              else {"status": "NOT_CHECKED"})
+    if verdict == "BATTERY_SHAPE" and pocket["status"] != "DETECTED":
+        verdict = "OTHER"
     return {
         "verdict": verdict,
         "cavity_profile": pocket,
@@ -287,7 +357,7 @@ def scan(folder, *, workers=1, progress=None):
             volume = 0
         ranked.append((volume, sid, relative, sha))
     ranked.sort(reverse=True)
-    limit = min(10, len(ranked))
+    limit = min(100, len(ranked))
     ranked = ranked[:limit]
     if progress:
         progress({"event": "phase", "message": f"体积排序完成：精查前 {limit} 个",
