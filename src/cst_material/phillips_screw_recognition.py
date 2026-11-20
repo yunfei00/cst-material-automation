@@ -458,6 +458,55 @@ def _thread_surface_evidence(solids, axis, origin, shaft_radius, profile, *,
             "reason": "已提取精确 B-rep 轴向截面"}
 
 
+def _thread_phase_consistency(profiles, helix_points, axis, origin, *, tolerance=0.02):
+    """Track the helical edge through meridian planes, rejecting annular grooves.
+
+    Each plane contains both opposite radial rays. Compare the predicted
+    helix/plane intersections against local section surface points. Unlike a
+    global radial range, the match must move axially with the helix phase.
+    """
+    direction = _unit(axis)
+    if direction is None or len(profiles) < 3 or len(helix_points) < 24:
+        return {"verified": False, "reason": "螺旋相位截面不足"}
+    u, v = _basis(direction)
+    data = []
+    for point in helix_points:
+        delta = tuple(point[i] - origin[i] for i in range(3))
+        z = _dot(delta, direction)
+        theta = math.atan2(_dot(delta, v), _dot(delta, u))
+        if data:
+            theta += 2 * math.pi * round((data[-1][0] - theta) / (2 * math.pi))
+        data.append((theta, z, math.hypot(_dot(delta, u), _dot(delta, v))))
+    phase_shift = abs(data[-1][1] - data[0][1])
+    if phase_shift <= tolerance:
+        return {"verified": False, "reason": "没有轴向螺旋推进"}
+    matched = 0
+    axial_positions = []
+    for index, teeth in enumerate(profiles):
+        theta = index * math.pi / len(profiles)
+        # Both half-planes intersect the same axial meridian.
+        intersections = []
+        for k in range(-16, 17):
+            for target in (theta + k * math.pi,):
+                for (a0, z0, r0), (a1, z1, r1) in zip(data, data[1:]):
+                    if a0 == a1 or not min(a0, a1) <= target <= max(a0, a1):
+                        continue
+                    t = (target - a0) / (a1 - a0)
+                    intersections.append((z0 + t * (z1 - z0), r0 + t * (r1 - r0)))
+        found = []
+        for z, radius in intersections:
+            if any(abs(sz - z) <= tolerance and abs(sr - radius) <= tolerance
+                   for sz, sr in teeth):
+                found.append(z)
+        if found:
+            matched += 1
+            axial_positions.append(found[0])
+    return {"verified": matched == len(profiles),
+            "matched_sections": matched, "section_count": len(profiles),
+            "reason": ("螺旋边与多角度截面相位吻合" if matched == len(profiles)
+                       else "螺旋边与截面牙型相位不一致")}
+
+
 def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                           mesh_points=None, profile=None):
     """Require a helical edge and independently measured external tooth relief."""
@@ -506,8 +555,11 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             relief = [hi - lo for lo, hi in observed]
             if not all(value > 1e-5 for value in relief):
                 continue
+            phase = _thread_phase_consistency(section["profiles"], points, axis, origin)
+            if not phase["verified"]:
+                continue
             return {**evidence, "verified": True, "edges_examined": examined,
-                    "section_count": section["sections"],
+                    "phase_evidence": phase, "section_count": section["sections"],
                     "method": "brep_helix_and_meridian_teeth"}
     return {"verified": False, "edges_examined": examined,
             "reason": "未同时确认螺旋线与真实截面牙型",
@@ -680,7 +732,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v17"
+        if (report.get("algorithm_version") != "phillips-geometry-v18"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -738,7 +790,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v17":
+            if old.get("algorithm_version") == "phillips-geometry-v18":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -751,7 +803,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v17",
+            "algorithm_version": "phillips-geometry-v18",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
