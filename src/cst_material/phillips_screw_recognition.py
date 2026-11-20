@@ -158,46 +158,6 @@ def _basis(axis):
     return u, v
 
 
-def _sample_evidence(solids, axis, shaft_origin, shaft_radius, head_radius):
-    points = _mesh_points(solids)
-    u, v = _basis(axis)
-    cylindrical = []
-    projected = []
-    for point in points:
-        relative = tuple(point[i] - shaft_origin[i] for i in range(3))
-        z = _dot(relative, axis)
-        x, y = _dot(relative, u), _dot(relative, v)
-        r = math.hypot(x, y)
-        projected.append((z, x, y, r))
-    if not projected:
-        return ({"verified": False, "reason": "无网格顶点"},
-                {"verified": False, "reason": "无网格顶点"})
-    # Shaft is the region whose outer envelope is near the shaft radius.
-    zs = sorted(p[0] for p in projected if p[3] < shaft_radius * 1.35)
-    if len(zs) >= 20:
-        low, high = zs[int(len(zs) * 0.05)], zs[int(len(zs) * 0.95)]
-        for z, x, y, r in projected:
-            if low <= z <= high and shaft_radius * 0.6 <= r <= shaft_radius * 1.35:
-                cylindrical.append((z, math.atan2(y, x), r))
-    thread = _thread_periodicity(cylindrical)
-    # Head top is either axial extreme; pick the one with more wide-radius points.
-    zlo = min(p[0] for p in projected)
-    zhi = max(p[0] for p in projected)
-    margin = max(0.02, head_radius * 0.08)
-    ends = []
-    for top, sign in ((zlo, -1), (zhi, 1)):
-        nearby = [(x, y, sign * (top - z)) for z, x, y, r in projected
-                  if abs(z - top) <= head_radius * 0.65 and r <= head_radius]
-        outer = sum(math.hypot(x, y) > head_radius * 0.75
-                    and depth < margin for x, y, depth in nearby)
-        ends.append((outer, nearby))
-    _, head = max(ends, key=lambda item: item[0])
-    # Mesh points alone do not guarantee that the recess has an empty cross:
-    # require evidence and leave ambiguous geometries unverified.
-    cross = _cross_recess_profile(head, head_radius=head_radius)
-    return thread, cross
-
-
 def _identify_head_shaft(cylinders, axis, *, tolerance=0.02):
     """Choose the largest-radius cylinder as head, then a smaller coaxial shaft.
 
@@ -741,43 +701,6 @@ def _join_helix_segments(segments, axis, origin, shaft_radius, *,
     return results
 
 
-def _brep_face_adjacency(solids):
-    """Count shared B-rep edges and face adjacency without names or metadata."""
-    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
-
-    face_cast = getattr(TopoDS, "Face_s", None) or getattr(TopoDS, "Face", None)
-    faces = []
-    edge_faces = {}
-    for solid in solids:
-        explorer = TopExp_Explorer(solid, TopAbs_FACE)
-        while explorer.More():
-            face = face_cast(explorer.Current())
-            index = len(faces)
-            faces.append(face)
-            edges = TopExp_Explorer(face, TopAbs_EDGE)
-            while edges.More():
-                edge = edges.Current()
-                # IsSame is topology identity; HashCode wrappers are not
-                # stable across all OCP releases.
-                found = next((i for i, (representative, _) in enumerate(edge_faces.values())
-                              if representative.IsSame(edge)), None)
-                if found is None:
-                    edge_faces[len(edge_faces)] = (edge, {index})
-                else:
-                    edge_faces[found][1].add(index)
-                edges.Next()
-            explorer.Next()
-    neighbors = [set() for _ in faces]
-    for _, owners in edge_faces.values():
-        for i in owners:
-            neighbors[i].update(owners - {i})
-    return {"face_count": len(faces), "edge_count": len(edge_faces),
-            "adjacent_pairs": sum(len(group) for group in neighbors) // 2,
-            "isolated_faces": sum(not group for group in neighbors)}
-
-
 def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                           mesh_points=None, profile=None):
     """Require a helical edge and independently measured external tooth relief."""
@@ -838,17 +761,10 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
     # modify them. If none passes the downstream geometry checks, a separate
     # reconstruction pass may still recover fragmented threads.
     helices = direct_helices
-    reconstructed = None
-    def reconstructed_candidates():
-        nonlocal reconstructed
-        if reconstructed is None:
-            reconstructed = (_join_helix_segments(partials, axis, origin, shaft_radius)
-                             if len(partials) <= 400 else [])
-        return reconstructed
-
     for candidate_pass in (0, 1):
         if candidate_pass:
-            helices = reconstructed_candidates()
+            helices = (_join_helix_segments(partials, axis, origin, shaft_radius)
+                       if len(partials) <= 400 else [])
         for points, evidence in helices:
             if mesh_points is not None and not _helix_on_shaft(
                     points, axis, origin, profile, mesh_points):
