@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v19",
+        "algorithm_version": "phillips-geometry-v20",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -400,3 +400,21 @@ def test_thread_phase_rejects_unrelated_sections():
     assert not _thread_phase_consistency(
         sections, points, (0, 0, 1), (0, 0, 0),
     )["verified"]
+
+
+def test_thread_on_head_rejected_by_axial_envelope():
+    from cst_material.phillips_screw_recognition import _helix_on_shaft
+
+    mesh = []
+    for z in range(12):
+        radius = 4.0 if z < 3 else 2.0
+        for i in range(16):
+            theta = 2 * math.pi * i / 16
+            mesh.append((radius * math.cos(theta), radius * math.sin(theta), float(z)))
+    head_thread = [(4 * math.cos(t), 4 * math.sin(t), t / (2 * math.pi))
+                   for t in [4 * math.pi * i / 96 for i in range(97)]]
+    shaft_thread = [(2 * math.cos(t), 2 * math.sin(t), 4 + t / (2 * math.pi))
+                    for t in [4 * math.pi * i / 96 for i in range(97)]]
+    profile = {"verified": True, "left_head": True}
+    assert not _helix_on_shaft(head_thread, (0, 0, 1), (0, 0, 0), profile, mesh)
+    assert _helix_on_shaft(shaft_thread, (0, 0, 1), (0, 0, 0), profile, mesh)
