@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v9"
+VERSION = "battery-geometry-v10"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -201,9 +201,9 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
                     highest = layer
                     break
             heights.append(highest)
-        # Real cell profile: raised center, lower shelves at both width edges.
-        # No outer raised shoulder is required. Compare each side against the
-        # median central plateau to tolerate local mesh-independent variation.
+        # Two-sided recess topology, independent of whether the center or
+        # the outer rim is higher. A side must differ from the central
+        # plateau and the difference must persist along the cell length.
         center = [h for h in heights[width_samples // 3:width_samples * 2 // 3]
                   if h is not None]
         if len(center) < 3:
@@ -215,13 +215,24 @@ def edge_groove_profile(solids, bbox, *, width_samples=33, length_sections=5):
         for left, right in ((1, width_samples // 4),
                             (width_samples * 3 // 4, width_samples - 1)):
             side = [h for h in heights[left:right] if h is not None]
-            # Require a sustained lowered band, not a single edge artifact.
-            bands.append(len(side) >= 2 and
-                         sum(h <= plateau - 2 for h in side) >= max(2, len(side) // 2))
+            # Lower edge shelves OR an interior trough with an outer rim.
+            lowered = (len(side) >= 2 and
+                       sum(h <= plateau - 2 for h in side) >= max(2, len(side) // 2))
+            trough = False
+            for j in range(left, right):
+                h = heights[j]
+                if h is None:
+                    continue
+                outer = [v for v in heights[max(0, j - 4):j] if v is not None]
+                inner = [v for v in heights[j + 1:min(width_samples, j + 5)] if v is not None]
+                if outer and inner and max(outer) >= h + 2 and max(inner) >= h + 2:
+                    trough = True
+                    break
+            bands.append(lowered or trough)
         depths.append(bands)
     both = sum(all(section) for section in depths)
     return {"status": "DETECTED" if both >= 3 else "NOT_DETECTED",
-            "method": "brep_raised_center_lowered_bilateral_edges",
+            "method": "brep_bilateral_longitudinal_recess_topology",
             "sections_with_both_grooves": both, "sections_checked": length_sections,
             "width_samples": width_samples}
 
