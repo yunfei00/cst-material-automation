@@ -1243,6 +1243,10 @@ def launch_viewer(path: str | Path) -> int:
                             )
                             item.setHidden(not visible)
                             return visible
+                        if row.get("candidate_type") == "BATTERY_SHAPE":
+                            item.setText(1, "电池 · 已匹配")
+                            item.setHidden(not visible)
+                            return visible
                         if row.get("candidate_type") == "PIN_CANDIDATE":
                             item.setText(1, "定位销 · 已匹配")
                             item.setHidden(not visible)
