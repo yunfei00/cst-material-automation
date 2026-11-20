@@ -137,6 +137,8 @@ def test_scan_selects_two_adjacent_cells(tmp_path, monkeypatch):
         sid, _, digest = task
         i = int(sid[-1])
         rec = _cell(0, 43 * i if i < 2 else 200)
+        if i == 2:
+            rec["fill_ratio"] = 0.75
         return sid, {"sha256": digest, **rec}
     monkeypatch.setattr(battery, "_one", fake)
     result = battery.scan(tmp_path)
