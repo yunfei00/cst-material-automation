@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v21",
+        "algorithm_version": "phillips-geometry-v22",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -447,3 +447,19 @@ def test_internal_material_on_hollow_tube():
     result = _external_thread_material([hollow], points, (0, 0, 1), (0, 0, 0))
     assert not result["verified"]
     assert result["internal_samples"] > 0
+
+
+def test_thread_tooth_flanks_requires_repeated_crests_and_roots():
+    from cst_material.phillips_screw_recognition import _thread_tooth_flanks
+
+    helix = [(2 * math.cos(t), 2 * math.sin(t), t / (2 * math.pi))
+             for t in [8 * math.pi * i / 192 for i in range(193)]]
+    smooth = [[(i / 100, 2.0) for i in range(401)] for _ in range(4)]
+    assert not _thread_tooth_flanks(
+        smooth, helix, (0, 0, 1), (0, 0, 0), 1.0,
+    )["verified"]
+    teeth = [[(i / 100, 2.0 + 0.2 * math.cos(2 * math.pi * i / 100))
+              for i in range(401)] for _ in range(4)]
+    assert _thread_tooth_flanks(
+        teeth, helix, (0, 0, 1), (0, 0, 0), 1.0,
+    )["verified"]
