@@ -161,7 +161,7 @@ def scan(folder, *, workers=8, progress=None):
             volume = 0
         ranked.append((volume, sid, relative, sha))
     ranked.sort(reverse=True)
-    limit = max(2, math.ceil(len(ranked) * 0.15)) if ranked else 0
+    limit = min(3, len(ranked))
     if progress:
         progress({"event": "phase", "message": f"体积排序完成：精查前 {limit} 个",
                   "total": len(rows), "candidates": limit})
