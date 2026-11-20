@@ -302,7 +302,12 @@ def _single_head_profile(points, axis, origin, head_radius, shaft_radius):
     right = [v for v in envelope[-4:] if v is not None]
     if len(left) < 2 or len(right) < 2:
         return {"verified": False, "reason": "两端截面采样不足"}
-    large = shaft_radius + 1e-5
+    # A modeled thread crest can exceed the nominal cylindrical shaft radius.
+    # Distinguish the head from the shaft by their measured radial separation,
+    # not by a microscopic offset above the shaft root radius.
+    if head_radius <= shaft_radius:
+        return {"verified": False, "reason": "头部半径未大于杆部"}
+    large = (head_radius + shaft_radius) / 2
     left_large = sum(v >= large for v in left) >= 2
     right_large = sum(v >= large for v in right) >= 2
     verified = left_large != right_large
@@ -368,7 +373,7 @@ def _screw_verdict(coaxial: bool, stepped: bool, profile: bool,
 
 
 
-def _helix_from_curve_points(points, axis, origin, shaft_radius):
+def _helix_from_curve_points(points, axis, origin, shaft_radius, *, head_radius=None):
     """Verify a sampled B-rep edge is a constant-pitch helix on the shaft."""
     direction = _unit(axis)
     if direction is None or len(points) < 24 or shaft_radius <= 0:
@@ -387,6 +392,14 @@ def _helix_from_curve_points(points, axis, origin, shaft_radius):
         angles.append(angle)
     turns = abs(angles[-1] - angles[0]) / (2 * math.pi)
     mean_r = sum(radii) / len(radii)
+    if head_radius is not None:
+        if head_radius <= shaft_radius or max(radii) >= (head_radius + shaft_radius) / 2:
+            return {"verified": False, "turns": round(turns, 2),
+                    "reason": "螺旋半径位于头部或大直径筒体，非杆部螺纹"}
+    # A true helix on a large lens barrel is not a screw-shaft helix.
+    # The upper bound is halfway between the independently measured head
+    # cylinder and the nominal shaft cylinder; do not compare to the root
+    # radius alone because real thread crests extend beyond it.
     if (turns < 1.0 or max(radii) - min(radii) > max(0.02, mean_r * 0.08)):
         return {"verified": False, "turns": round(turns, 2),
                 "reason": "不满足杆部恒半径多圈螺旋"}
@@ -695,7 +708,9 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             for i in range(97):
                 p = curve.Value(first + (last - first) * i / 96)
                 points.append((p.X(), p.Y(), p.Z()))
-            evidence = _helix_from_curve_points(points, axis, origin, shaft_radius)
+            evidence = _helix_from_curve_points(
+                points, axis, origin, shaft_radius,
+                head_radius=profile.get("head_radius"))
             if not evidence["verified"]:
                 continue
             if mesh_points is not None and not _helix_on_shaft(
@@ -833,6 +848,7 @@ def recognize_step(path: str | Path) -> dict:
         profile = _single_head_profile(points, axis, shaft["axis_origin"],
                                        head_radius, shaft["radius"])
         if profile["verified"]:
+            profile["head_radius"] = head_radius
             core = _solid_axis_core(solids, points, axis, shaft["axis_origin"],
                                     profile)
     pin = _locating_pin_steps(cylinders, axis)
@@ -892,7 +908,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v22"
+        if (report.get("algorithm_version") != "phillips-geometry-v23"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -950,7 +966,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v22":
+            if old.get("algorithm_version") == "phillips-geometry-v23":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -963,7 +979,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v22",
+            "algorithm_version": "phillips-geometry-v23",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
