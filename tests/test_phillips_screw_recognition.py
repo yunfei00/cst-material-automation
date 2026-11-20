@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v15",
+        "algorithm_version": "phillips-geometry-v16",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -347,16 +347,11 @@ def test_hardware_aware_worker_count():
     assert recommended_workers(8000, cpu_count=1, available_memory=gib) == 1
 
 
-def test_helix_location_rejects_thread_on_large_head():
-    from cst_material.phillips_screw_recognition import _helix_shaft_location
+def test_helix_edge_does_not_require_shaft_radius_ratio():
+    from cst_material.phillips_screw_recognition import _helix_from_curve_points
 
-    mesh = [(r * math.cos(a), r * math.sin(a), z)
-            for z, r in [(0, 3), (1, 3), (2, 1.5), (5, 1.5), (8, 1.5), (10, 1.5)]
-            for a in (0, math.pi / 2, math.pi, 3 * math.pi / 2)]
-    head_thread = [(2 * math.cos(t), 2 * math.sin(t), 0.5 + t / (8 * math.pi))
-                   for t in [8 * math.pi * i / 96 for i in range(97)]]
-    shaft_thread = [(1.5 * math.cos(t), 1.5 * math.sin(t), 4 + t / (4 * math.pi))
-                    for t in [8 * math.pi * i / 96 for i in range(97)]]
-    profile = {"verified": True, "left_head": True}
-    assert not _helix_shaft_location(head_thread, mesh, (0, 0, 1), (0, 0, 0), 1.5, profile)
-    assert _helix_shaft_location(shaft_thread, mesh, (0, 0, 1), (0, 0, 0), 1.5, profile)
+    points = [(3 * math.cos(t), 3 * math.sin(t), t / (2 * math.pi))
+              for t in [4 * math.pi * i / 96 for i in range(97)]]
+    result = _helix_from_curve_points(points, (0, 0, 1), (0, 0, 0), 1.5)
+    assert result["verified"]
+    assert result["pitch_mm"] > 0
