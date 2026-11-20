@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v26",
+        "algorithm_version": "phillips-geometry-v27",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -519,3 +519,22 @@ def test_join_helix_segments_does_not_bridge_large_gap():
         0.55, head_radius=1.4,
     )
     assert not found
+
+
+def test_helix_on_shaft_rejects_head_region_thread():
+    from cst_material.phillips_screw_recognition import _helix_on_shaft
+
+    axis = (0, 0, 1)
+    origin = (0, 0, 0)
+    mesh = [(r * math.cos(a), r * math.sin(a), z)
+            for z in [i * 0.1 for i in range(101)]
+            for a in [j * math.pi / 4 for j in range(8)]
+            for r in [2.55 if z < 4 else 2.335]]
+    profile = {"verified": True, "left_head": True,
+               "head_radius": 2.55, "shaft_radius": 2.335}
+    head_thread = [(2.4 * math.cos(t), 2.4 * math.sin(t), 1 + t / (2 * math.pi))
+                   for t in [i * 2 * math.pi / 40 for i in range(41)]]
+    assert not _helix_on_shaft(head_thread, axis, origin, profile, mesh)
+    shaft_thread = [(2.35 * math.cos(t), 2.35 * math.sin(t), 6 + t / (2 * math.pi))
+                    for t in [i * 2 * math.pi / 40 for i in range(41)]]
+    assert _helix_on_shaft(shaft_thread, axis, origin, profile, mesh)
