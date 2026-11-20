@@ -794,6 +794,16 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
             if not math.isfinite(first) or not math.isfinite(last) or last <= first:
                 continue
             examined += 1
+            # Reject distant large-diameter features before expensive sampling
+            # and segment joining. Thread crests may exceed the nominal
+            # shaft cylinder, so allow a generous relative range.
+            midpoint = curve.Value((first + last) / 2)
+            delta = tuple((midpoint.X(), midpoint.Y(), midpoint.Z())[i] - origin[i]
+                          for i in range(3))
+            axial = _dot(delta, axis)
+            radial = math.sqrt(max(0.0, _dot(delta, delta) - axial * axial))
+            if radial > shaft_radius * 1.8 or radial < shaft_radius * 0.5:
+                continue
             points = []
             for i in range(97):
                 p = curve.Value(first + (last - first) * i / 96)
@@ -806,8 +816,16 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
                 fragments.append(points)
     # Whole-edge helices are included; fragments are also joined where CAD
     # split a continuous B-rep boundary into multiple tangent edges.
-    helices = _join_helix_segments(
-        fragments, axis, origin, shaft_radius)
+    # Avoid quadratic joining when a highly tessellated CAD part contains
+    # thousands of candidate edges. Preserve full-edge helix evidence.
+    if len(fragments) > 400:
+        helices = []
+        for fragment in fragments:
+            result = _helix_from_curve_points(fragment, axis, origin, shaft_radius)
+            if result["verified"]:
+                helices.append((fragment, result))
+    else:
+        helices = _join_helix_segments(fragments, axis, origin, shaft_radius)
     for points, evidence in helices:
         if mesh_points is not None and not _helix_on_shaft(
                 points, axis, origin, profile, mesh_points):
@@ -894,7 +912,9 @@ def recognize_step(path: str | Path) -> dict:
     from OCP.TopoDS import TopoDS
 
     solids = read_step(path)
-    topology = _brep_face_adjacency(solids)
+    # Full edge-to-face adjacency is quadratic on detailed threaded CAD;
+    # defer topology diagnostics until an explicit diagnostic request.
+    topology = {"deferred": True, "reason": "避免批量扫描的二次复杂度"}
     axes = {}
     faces = []
     for solid in solids:
@@ -1021,7 +1041,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v25"
+        if (report.get("algorithm_version") != "phillips-geometry-v26"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -1079,7 +1099,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v25":
+            if old.get("algorithm_version") == "phillips-geometry-v26":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -1092,7 +1112,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v25",
+            "algorithm_version": "phillips-geometry-v26",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
