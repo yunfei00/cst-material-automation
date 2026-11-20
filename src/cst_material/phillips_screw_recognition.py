@@ -558,7 +558,6 @@ def recognize_step(path: str | Path) -> dict:
         verdict = "LOCATING_PIN"
     else:
         verdict = "OTHER"
-    pin_verified = verdict == "LOCATING_PIN"
     score = 100 if verdict != "OTHER" else 0
     return {"verdict": verdict,
             "score": score, "evidence": [
