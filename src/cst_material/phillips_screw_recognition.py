@@ -198,7 +198,7 @@ def _sample_evidence(solids, axis, shaft_origin, shaft_radius, head_radius):
     return thread, cross
 
 
-def _identify_head_shaft(cylinders, axis, *, min_ratio=1.08):
+def _identify_head_shaft(cylinders, axis, *, tolerance=0.02):
     """Choose the largest-radius cylinder as head, then a smaller coaxial shaft.
 
     Never choose the smallest face as the shaft: fillets and recess walls may
@@ -209,13 +209,13 @@ def _identify_head_shaft(cylinders, axis, *, min_ratio=1.08):
     head = max(cylinders, key=lambda item: item["radius"])
     candidates = []
     for candidate in cylinders:
-        if candidate is head or candidate["radius"] * min_ratio >= head["radius"]:
+        if candidate is head or candidate["radius"] >= head["radius"] - tolerance:
             continue
         delta = tuple(head["axis_origin"][i] - candidate["axis_origin"][i]
                       for i in range(3))
         axial = _dot(delta, axis)
         radial = math.sqrt(max(0.0, _dot(delta, delta) - axial * axial))
-        if radial > max(0.15, candidate["radius"] * 0.2):
+        if radial > tolerance:
             continue
         candidates.append(candidate)
     # Prefer the largest plausible shaft, not a tiny screw-hole or fillet.
@@ -224,7 +224,7 @@ def _identify_head_shaft(cylinders, axis, *, min_ratio=1.08):
 
 
 def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
-                           radial_tolerance=0.02, min_radius_ratio=0.2):
+                           radial_tolerance=0.02):
     """Check actual 3D axis lines, not merely parallel directions.
 
     Angular tolerance is in radians; radial tolerance is in model units (mm).
@@ -237,9 +237,7 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
     reference = _unit(head["direction"])
     if reference is None:
         return {"verified": False, "reason": "头部轴向无效", "checked": 0}
-    minimum_radius = head['radius'] * min_radius_ratio
-    structural = [(index, candidate) for index, candidate in enumerate(cylinders)
-                  if candidate['radius'] >= minimum_radius]
+    structural = list(enumerate(cylinders))
     failures = []
     max_angle = 0.0
     max_offset = 0.0
@@ -262,8 +260,7 @@ def _common_axis_cylinders(cylinders, *, angular_tolerance=0.01,
         "verified": not failures,
         "reason": "主体圆柱面共轴" if not failures else "主体存在偏轴或倾斜圆柱面",
         "checked": len(structural),
-        "ignored_small_cylinders": len(cylinders) - len(structural),
-        "minimum_radius": round(minimum_radius, 6),
+        "ignored_small_cylinders": 0,
         "failed_indices": failures,
         "max_angle_deg": round(math.degrees(max_angle), 5),
         "max_offset_mm": round(max_offset, 6),
@@ -302,7 +299,7 @@ def _single_head_profile(points, axis, origin, head_radius, shaft_radius):
     right = [v for v in envelope[-4:] if v is not None]
     if len(left) < 2 or len(right) < 2:
         return {"verified": False, "reason": "两端截面采样不足"}
-    large = shaft_radius + (head_radius - shaft_radius) * 0.55
+    large = shaft_radius + 1e-5
     left_large = sum(v >= large for v in left) >= 2
     right_large = sum(v >= large for v in right) >= 2
     verified = left_large != right_large
@@ -680,7 +677,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v16"
+        if (report.get("algorithm_version") != "phillips-geometry-v17"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
