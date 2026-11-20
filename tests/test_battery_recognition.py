@@ -95,6 +95,6 @@ def test_top_ten_and_single_result(tmp_path, monkeypatch):
     result = battery.scan(tmp_path, workers=1)
     assert len(called) == 10
     assert result["summary"]["matched"] == 1
-    report = json.loads((tmp_path / "battery_recognition.json").read_text())
+    report = json.loads((tmp_path / "battery_recognition.json").read_text(encoding="utf-8"))
     assert sum(rec.get("verdict") == "BATTERY_SHAPE"
                for rec in report["results"].values()) == 1
