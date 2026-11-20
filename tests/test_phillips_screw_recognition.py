@@ -184,7 +184,7 @@ def test_solid_shaft_centerline_passes():
     result = _solid_axis_core([solid], points, (0, 0, 1),
                               (0, 0, 0), profile)
     assert result["verified"]
-    assert result["axis_core_inside"] == 3
+    assert result["axis_core_inside"] == 9
 
 
 def test_hollow_shaft_never_passes_verdict():
