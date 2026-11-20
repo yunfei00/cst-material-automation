@@ -632,7 +632,7 @@ def _recognize_one(task):
     """Worker only reads a single STEP; never touches the shared report."""
     sid, path, digest = task
     try:
-        return sid, {"status": "PASS", "sha256": digest, **recognize_step(path)}
+        return sid, {"status": "PASS", "sha256": digest, **recognize_step(Path(path))}
     except Exception as exc:  # noqa: BLE001
         return sid, {"status": "FAIL", "sha256": digest,
                      "error": f"{type(exc).__name__}: {exc}"}
