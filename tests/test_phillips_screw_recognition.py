@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v22",
+        "algorithm_version": "phillips-geometry-v23",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -463,3 +463,34 @@ def test_thread_tooth_flanks_requires_repeated_crests_and_roots():
     assert _thread_tooth_flanks(
         teeth, helix, (0, 0, 1), (0, 0, 0), 1.0,
     )["verified"]
+
+
+def test_single_head_ignores_thread_crest_above_nominal_shaft():
+    from cst_material.phillips_screw_recognition import _single_head_profile
+
+    points = []
+    for i in range(240):
+        z = i / 20
+        radius = 1.4 if z < 2 else 0.7
+        for angle in (0, math.pi / 2, math.pi, 3 * math.pi / 2):
+            points.append((radius * math.cos(angle), radius * math.sin(angle), z))
+    result = _single_head_profile(points, (0, 0, 1), (0, 0, 0), 1.4, 0.55)
+    assert result["verified"]
+    assert result["left_head"] and not result["right_head"]
+
+
+def test_helix_rejects_large_lens_barrel_but_accepts_shaft_crest():
+    from cst_material.phillips_screw_recognition import _helix_from_curve_points
+
+    def helix(radius):
+        return [(radius * math.cos(t), radius * math.sin(t), t / (2 * math.pi))
+                for t in [4 * math.pi * i / 96 for i in range(97)]]
+
+    screw = _helix_from_curve_points(
+        helix(0.7), (0, 0, 1), (0, 0, 0), 0.55, head_radius=1.4,
+    )
+    lens = _helix_from_curve_points(
+        helix(2.465), (0, 0, 1), (0, 0, 0), 0.55, head_radius=2.8,
+    )
+    assert screw["verified"]
+    assert not lens["verified"]
