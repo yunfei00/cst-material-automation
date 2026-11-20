@@ -406,49 +406,81 @@ def _helix_from_curve_points(points, axis, origin, shaft_radius):
             "reason": "B-rep 恒导程螺旋边" if verified else "螺距拟合不稳定"}
 
 
-def _helix_shaft_location(edge_points, mesh_points, axis, origin, shaft_radius, profile):
-    """Check a helix lies in the narrow shaft-side axial region."""
+def _thread_surface_evidence(solids, axis, origin, shaft_radius, profile, *,
+                             samples=4, tolerance=1e-5):
+    """Verify actual external thread teeth using meridian B-rep sections.
+
+    An annular groove repeats in axial sections but has no angular phase shift.
+    A helix edge alone is insufficient: section teeth and phase must agree.
+    """
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+    from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
+
     direction = _unit(axis)
-    if direction is None or not mesh_points or not profile.get("verified"):
-        return False
-    all_z = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
-             for p in mesh_points]
-    lo, hi = min(all_z), max(all_z)
-    if hi - lo <= 1e-6:
-        return False
-    zs = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
-          for p in edge_points]
-    # Reserve the head-side 25% of the body; threads must remain on the shaft.
-    cutoff = lo + 0.25 * (hi - lo) if profile["left_head"] else hi - 0.25 * (hi - lo)
-    if profile["left_head"] and min(zs) < cutoff:
-        return False
-    if not profile["left_head"] and max(zs) > cutoff:
-        return False
-    radii = []
-    for point, z in zip(edge_points, zs):
-        delta = tuple(point[i] - origin[i] for i in range(3))
-        radii.append(math.sqrt(max(0.0, _dot(delta, delta) - z * z)))
-    return 0.85 * shaft_radius <= sum(radii) / len(radii) <= 1.12 * shaft_radius
+    if direction is None or not profile.get("verified"):
+        return {"verified": False, "reason": "未确认实体杆部"}
+    u, v = _basis(direction)
+    sections = []
+    for index in range(samples):
+        angle = index * math.pi / samples
+        normal = tuple(math.cos(angle) * u[i] + math.sin(angle) * v[i]
+                       for i in range(3))
+        plane = gp_Pln(gp_Pnt(*origin), gp_Dir(*normal))
+        teeth = []
+        for solid in solids:
+            section = BRepAlgoAPI_Section(solid, plane, False)
+            section.Build()
+            if not section.IsDone():
+                continue
+            explorer = TopExp_Explorer(section.Shape(), TopAbs_EDGE)
+            while explorer.More():
+                edge_cast = getattr(TopoDS, "Edge_s", None) or getattr(TopoDS, "Edge", None)
+                curve = BRepAdaptor_Curve(edge_cast(explorer.Current()))
+                explorer.Next()
+                first, last = curve.FirstParameter(), curve.LastParameter()
+                if not all(math.isfinite(t) for t in (first, last)) or last <= first:
+                    continue
+                for j in range(33):
+                    point = curve.Value(first + (last - first) * j / 32)
+                    delta = (point.X() - origin[0], point.Y() - origin[1],
+                             point.Z() - origin[2])
+                    z = _dot(delta, direction)
+                    radial = math.sqrt(max(0.0, _dot(delta, delta) - z * z))
+                    if radial > tolerance:
+                        teeth.append((z, radial))
+        if not teeth:
+            return {"verified": False, "reason": "截面缺少牙型曲线"}
+        sections.append(teeth)
+    return {"verified": True, "sections": len(sections), "profiles": sections,
+            "reason": "已提取精确 B-rep 轴向截面"}
 
 
-def _brep_thread_evidence(solids, axis, origin, shaft_radius, *, mesh_points=None, profile=None):
-    """Sample actual STEP edges, not a visually inferred mesh spiral."""
+def _brep_thread_evidence(solids, axis, origin, shaft_radius, *,
+                          mesh_points=None, profile=None):
+    """Require a helical edge and independently measured external tooth relief."""
     from OCP.BRepAdaptor import BRepAdaptor_Curve
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
 
+    if not profile or not profile.get("verified"):
+        return {"verified": False, "reason": "未确认头杆结构"}
+    section = _thread_surface_evidence(solids, axis, origin, shaft_radius, profile)
+    if not section["verified"]:
+        return section
+    direction = _unit(axis)
     examined = 0
-    off_shaft_helix = False
     for solid in solids:
         explorer = TopExp_Explorer(solid, TopAbs_EDGE)
         while explorer.More():
             edge_cast = getattr(TopoDS, "Edge_s", None) or getattr(TopoDS, "Edge", None)
-            if edge_cast is None:
-                raise RuntimeError("当前 OCP 不支持 Edge 转换")
             curve = BRepAdaptor_Curve(edge_cast(explorer.Current()))
-            first, last = curve.FirstParameter(), curve.LastParameter()
             explorer.Next()
+            first, last = curve.FirstParameter(), curve.LastParameter()
             if not math.isfinite(first) or not math.isfinite(last) or last <= first:
                 continue
             examined += 1
@@ -457,16 +489,30 @@ def _brep_thread_evidence(solids, axis, origin, shaft_radius, *, mesh_points=Non
                 p = curve.Value(first + (last - first) * i / 96)
                 points.append((p.X(), p.Y(), p.Z()))
             evidence = _helix_from_curve_points(points, axis, origin, shaft_radius)
-            if evidence["verified"]:
-                if mesh_points is not None and profile is not None and not _helix_shaft_location(
-                        points, mesh_points, axis, origin, shaft_radius, profile):
-                    off_shaft_helix = True
-                    continue
-                return {**evidence, "edges_examined": examined, "method": "brep_edge"}
+            if not evidence["verified"]:
+                continue
+            # Match a helical ridge to actual radial relief at its axial
+            # position, without requiring a fixed fraction of the part length.
+            heights = [_dot(tuple(p[i] - origin[i] for i in range(3)), direction)
+                       for p in points]
+            zlo, zhi = min(heights), max(heights)
+            observed = []
+            for teeth in section["profiles"]:
+                local = [r for z, r in teeth if zlo <= z <= zhi]
+                if local:
+                    observed.append((min(local), max(local)))
+            if len(observed) < 2:
+                continue
+            # Reject cylindrical surfaces and annular grooves without helix.
+            relief = [hi - lo for lo, hi in observed]
+            if not all(value > 1e-5 for value in relief):
+                continue
+            return {**evidence, "verified": True, "edges_examined": examined,
+                    "section_count": section["sections"],
+                    "method": "brep_helix_and_meridian_teeth"}
     return {"verified": False, "edges_examined": examined,
-            "off_shaft_helix": off_shaft_helix,
-            "reason": "螺纹不在杆部" if off_shaft_helix else "未发现连续恒导程螺旋边",
-            "method": "brep_edge"}
+            "reason": "未同时确认螺旋线与真实截面牙型",
+            "method": "brep_helix_and_meridian_teeth"}
 
 
 def _locating_pin_steps(cylinders, axis, *, minimum_levels=3):
@@ -635,7 +681,7 @@ def complete_cached_report(root: Path) -> dict | None:
         return None
     try:
         report = json.loads(cache.read_text(encoding="utf-8"))
-        if (report.get("algorithm_version") != "phillips-geometry-v15"
+        if (report.get("algorithm_version") != "phillips-geometry-v16"
                 or not report.get("complete")):
             return None
         signature, total = source_signature(root)
@@ -693,7 +739,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     if cache.is_file():
         try:
             old = json.loads(cache.read_text(encoding="utf-8"))
-            if old.get("algorithm_version") == "phillips-geometry-v15":
+            if old.get("algorithm_version") == "phillips-geometry-v16":
                 previous = old.get("results", {})
         except (OSError, ValueError, TypeError):
             pass
@@ -706,7 +752,7 @@ def scan(folder: str | Path, *, progress=None, workers=None) -> dict:
     def save(complete_flag):
         tmp = cache.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "algorithm_version": "phillips-geometry-v15",
+            "algorithm_version": "phillips-geometry-v16",
             "summary": dict(summary), "results": results,
             "source_signature": signature, "complete": complete_flag,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
