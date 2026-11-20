@@ -242,12 +242,12 @@ def test_complete_cache_skips_rescan_and_invalidates_on_index_change(tmp_path, m
     monkeypatch.setattr(module, "recognize_step", lambda path: {
         "verdict": "PHILLIPS_SCREW", "score": 100,
     })
-    module.scan(tmp_path)
+    module.scan(tmp_path, workers=1)
     def forbidden(_path):
         raise AssertionError("cache must skip hashing and recognition")
     monkeypatch.setattr(module, "sha256_file", forbidden)
     monkeypatch.setattr(module, "recognize_step", forbidden)
-    reused = module.scan(tmp_path)
+    reused = module.scan(tmp_path, workers=1)
     assert reused["from_cache"] is True
     cached = module.complete_cached_report(tmp_path)
     assert cached is not None
