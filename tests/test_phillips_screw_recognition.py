@@ -205,7 +205,7 @@ def test_scan_streams_matches_and_checkpoints_current_run_only(tmp_path, monkeyp
     (tmp_path / "two.step").write_text("two")
     cache = tmp_path / "phillips_screw_recognition.json"
     cache.write_text(json.dumps({
-        "algorithm_version": "phillips-geometry-v27",
+        "algorithm_version": "phillips-geometry-v28",
         "results": {"stale": {"status": "PASS", "verdict": "PHILLIPS_SCREW"}}
     }))
     monkeypatch.setattr(module, "sha256_file", lambda path: path.name)
@@ -538,3 +538,18 @@ def test_helix_on_shaft_rejects_head_region_thread():
     shaft_thread = [(2.35 * math.cos(t), 2.35 * math.sin(t), 6 + t / (2 * math.pi))
                     for t in [i * 2 * math.pi / 40 for i in range(41)]]
     assert _helix_on_shaft(shaft_thread, axis, origin, profile, mesh)
+
+
+def test_individual_helix_survives_nonhelical_neighbors():
+    from cst_material.phillips_screw_recognition import _helix_from_curve_points
+
+    good = [(0.75 * math.cos(t), 0.75 * math.sin(t), 0.15 * t)
+            for t in [8 * math.pi * i / 96 for i in range(97)]]
+    evidence = _helix_from_curve_points(good, (0, 0, 1), (0, 0, 0), 0.75)
+    assert evidence["verified"]
+    assert evidence["turns"] == 4.0
+    # Adjacent non-helical edge must never be used to replace the
+    # already verified original helix.
+    bad = [(0.75 + i * 0.01, 0.0, good[-1][2])
+           for i in range(97)]
+    assert not _helix_from_curve_points(bad, (0, 0, 1), (0, 0, 0), 0.75)["verified"]
