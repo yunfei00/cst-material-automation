@@ -488,7 +488,7 @@ def _thread_phase_consistency(profiles, helix_points, axis, origin, *, tolerance
         intersections = []
         for k in range(-16, 17):
             for target in (theta + k * math.pi,):
-                for (a0, z0, r0), (a1, z1, r1) in zip(data, data[1:]):
+                for (a0, z0, r0), (a1, z1, r1) in itertools.pairwise(data):
                     if a0 == a1 or not min(a0, a1) <= target <= max(a0, a1):
                         continue
                     t = (target - a0) / (a1 - a0)
