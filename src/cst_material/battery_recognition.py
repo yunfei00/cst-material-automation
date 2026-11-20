@@ -129,7 +129,7 @@ def complete_cached_report(root: Path):
         return None
 
 
-def scan(folder, *, workers=2, progress=None):
+def scan(folder, *, workers=1, progress=None):
     root = Path(folder).resolve(strict=True)
     db = root / "geometry_features.sqlite3"
     if not db.is_file():
@@ -205,7 +205,7 @@ def scan(folder, *, workers=2, progress=None):
     if progress:
         progress({"event": "phase", "message": f"正在并行精查 {len(tasks)} 个 STEP",
                   "done": len(results), "total": limit})
-    count = max(1, min(int(workers), 2, len(tasks) or 1, os.cpu_count() or 1))
+    count = 1  # Battery scanning is intentionally sequential and memory-bounded.
     if count == 1:
         for task in tasks:
             accept(*_one(task))
@@ -242,7 +242,7 @@ def scan(folder, *, workers=2, progress=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="手机电池几何形态识别")
     parser.add_argument("folder")
-    parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args(argv)
     def emit(event):
         print(json.dumps(event, ensure_ascii=False), flush=True)
