@@ -113,6 +113,7 @@ def launch_viewer(path: str | Path) -> int:
             self.shield_only = QCheckBox("屏蔽罩")
             self.screw_only = QCheckBox("螺丝")
             self.pin_only = QCheckBox("定位销")
+            self.battery_only = QCheckBox("电池")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -128,11 +129,11 @@ def launch_viewer(path: str | Path) -> int:
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
             filters = QHBoxLayout()
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only, self.battery_only):
                 filters.addWidget(checkbox)
             left_layout.addLayout(filters)
             workers_row = QHBoxLayout()
-            workers_row.addWidget(QLabel("螺丝/定位销识别进程数"))
+            workers_row.addWidget(QLabel("螺丝/定位销/电池识别进程数"))
             self.fastener_workers = QSpinBox()
             self.fastener_workers.setRange(1, 16)
             try:
@@ -250,6 +251,7 @@ def launch_viewer(path: str | Path) -> int:
             self.shield_only.toggled.connect(self._toggle_shield_only)
             self.screw_only.toggled.connect(self._toggle_screw_only)
             self.pin_only.toggled.connect(self._toggle_pin_only)
+            self.battery_only.toggled.connect(self._toggle_battery_only)
             self.fastener_workers.valueChanged.connect(
                 lambda count: self.settings.setValue("fastener/workers", count))
 
@@ -492,12 +494,109 @@ def launch_viewer(path: str | Path) -> int:
             dialog.exec()
 
         def _exclusive_filter(self, active):
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only):
+            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only, self.battery_only):
                 if checkbox is active:
                     continue
                 checkbox.blockSignals(True)
                 checkbox.setChecked(False)
                 checkbox.blockSignals(False)
+
+        def _toggle_battery_only(self, checked):
+            if checked:
+                self._exclusive_filter(self.battery_only)
+                self._scan_battery_geometry()
+            else:
+                if self.refine_process is not None:
+                    self.refine_process.kill()
+                    self.refine_process = None
+                self._clear_search_results()
+
+        def _scan_battery_geometry(self):
+            if not self.root or self.refine_process is not None:
+                return
+            import json
+            import sys
+            from cst_material.battery_recognition import complete_cached_report, VERSION
+
+            def show_report(report):
+                rows = [{"solid_id": sid, "verdict": "BATTERY_SHAPE",
+                         "candidate_type": "BATTERY_SHAPE"}
+                        for sid, rec in report["results"].items()
+                        if rec.get("status") == "PASS"
+                        and rec.get("verdict") == "BATTERY_SHAPE"
+                        and sid in self.tree_items]
+                rows.sort(key=lambda row: row["solid_id"])
+                if self.battery_only.isChecked():
+                    self.search_results = {row["solid_id"]: row for row in rows}
+                    self._sort_tree_by_search_results(rows)
+                    self._filter_tree(self.search.text())
+                self.search_summary.setText(
+                    f'电池形态匹配 {len(rows)} 个；失败 {report["summary"].get("failed", 0)} 个。'
+                    '仅凭几何不能确认电池身份或自动赋材。')
+            try:
+                cached = complete_cached_report(self.root)
+            except (OSError, ValueError):
+                cached = None
+            if cached is not None:
+                show_report(cached)
+                return
+            process = QProcess(self)
+            self.refine_process = process
+            self.search_results = {}
+            self._filter_tree(self.search.text())
+            self.search_summary.setText("正在使用多进程识别电池几何形态")
+            process.setWorkingDirectory(str(self.root))
+            process.setProgram(sys.executable)
+            process.setArguments(["-m", "cst_material.battery_recognition",
+                                  str(self.root), "--workers",
+                                  str(self.fastener_workers.value())])
+            process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            pending = bytearray()
+
+            def on_output():
+                pending.extend(bytes(process.readAllStandardOutput()))
+                while b"\\n" in pending:
+                    raw, _, rest = pending.partition(b"\\n")
+                    pending[:] = rest
+                    try:
+                        event = json.loads(raw.decode("utf-8", errors="replace"))
+                    except (ValueError, TypeError):
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    if event.get("event") == "match" and self.battery_only.isChecked():
+                        sid = event.get("solid_id")
+                        if sid in self.tree_items:
+                            self.search_results[sid] = {
+                                "solid_id": sid, "verdict": "BATTERY_SHAPE",
+                                "candidate_type": "BATTERY_SHAPE"}
+                    elif event.get("event") == "progress" and self.battery_only.isChecked():
+                        self._filter_tree(self.search.text())
+                        self.search_summary.setText(
+                            f'电池识别 {event.get("done", 0)}/{event.get("total", 0)}；'
+                            f'形态匹配 {event.get("matched", 0)}；'
+                            f'失败 {event.get("failed", 0)}')
+
+            def finished(code, _status):
+                if self.refine_process is not process:
+                    return
+                on_output()
+                self.refine_process = None
+                try:
+                    report = json.loads((self.root / "battery_recognition.json").read_text(
+                        encoding="utf-8"))
+                    if code != 0 or report.get("algorithm_version") != VERSION or not report.get("complete"):
+                        raise ValueError("识别未正常完成或报告版本不匹配")
+                    show_report(report)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    self.search_summary.setText(f"电池识别失败：{exc}")
+
+            process.readyReadStandardOutput.connect(on_output)
+            process.finished.connect(finished)
+            process.start()
+            if not process.waitForStarted(3000):
+                self.refine_process = None
+                self.search_summary.setText("电池识别进程启动失败")
 
         def _toggle_screw_only(self, checked):
             if checked:
@@ -631,7 +730,7 @@ def launch_viewer(path: str | Path) -> int:
                         # completed matches remain visible even in this case.
                         pass
                     report = json.loads((self.root / "phillips_screw_recognition.json").read_text(encoding="utf-8"))
-                    if report.get("algorithm_version") != "phillips-geometry-v14":
+                    if report.get("algorithm_version") != "phillips-geometry-v29":
                         raise ValueError("螺丝结果缓存版本不匹配")
                     # Only use records from the current scan, never stale cached
                     # entries left over from a previous interrupted run.
