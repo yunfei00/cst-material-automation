@@ -195,23 +195,10 @@ def test_pair_uses_aabb_thickness_not_inflated_mesh_pca():
     assert battery.compatible_pair(first, second)
 
 
-def test_narrow_bilateral_chamfer_faces_are_detected_without_raster():
+def test_narrow_edge_detector_rejects_plain_cuboid():
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-    from OCP.BRepFilletAPI import BRepFilletAPI_MakeChamfer
-    from OCP.TopAbs import TopAbs_EDGE
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
 
     box = BRepPrimAPI_MakeBox(100, 40, 5).Solid()
-    plain = battery.edge_groove_profile([box], [0, 0, 0, 100, 40, 5])
-    assert plain["status"] == "NOT_DETECTED"
-
-    # The detector must not need a wide sampled depression: chamfer faces
-    # can be narrower than the previous 40/33 mm sample spacing.
-    chamfer = BRepFilletAPI_MakeChamfer(box)
-    explorer = TopExp_Explorer(box, TopAbs_EDGE)
-    while explorer.More():
-        edge = (getattr(TopoDS, "Edge_s", None) or TopoDS.Edge)(
-            explorer.Current())
-        explorer.Next()
-    assert plain["method"] == "brep_narrow_bilateral_longitudinal_faces"
+    result = battery.edge_groove_profile([box], [0, 0, 0, 100, 40, 5])
+    assert result["status"] == "NOT_DETECTED"
+    assert result["method"] == "brep_narrow_bilateral_longitudinal_faces"
