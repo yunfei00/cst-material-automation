@@ -15,7 +15,7 @@ from pathlib import Path
 from cst_material.occt_geometry import geometry_metrics, read_step, sha256_file
 from cst_material.phillips_screw_recognition import source_signature
 
-VERSION = "battery-geometry-v5"
+VERSION = "battery-geometry-v6"
 
 
 def shape_verdict(*, volume, dimensions, fill, solid_count=1):
@@ -82,6 +82,85 @@ def _oriented_dimensions(solids, *, with_normal=False):
     return ordered
 
 
+def cavity_profile(solids, bbox, *, grid=13):
+    """Coarse B-rep occupancy profile for internal voids and open recesses.
+
+    Scan the three principal axis-aligned sections. An empty sample is a
+    feature only when occupied samples surround it in the same section.
+    This is evidence of a structural pocket, not proof of battery identity.
+    """
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.TopAbs import TopAbs_IN, TopAbs_ON
+    from OCP.gp import gp_Pnt
+
+    if len(bbox) != 6 or any(not math.isfinite(v) for v in bbox):
+        return {"status": "UNAVAILABLE", "reason": "invalid bounding box"}
+    spans = [bbox[i + 3] - bbox[i] for i in range(3)]
+    if min(spans) <= 0:
+        return {"status": "UNAVAILABLE", "reason": "degenerate bounding box"}
+    classifiers = [BRepClass3d_SolidClassifier(s) for s in solids]
+    axes = sorted(range(3), key=lambda i: spans[i], reverse=True)
+    sections = []
+    for depth_axis in axes:
+        plane_axes = [i for i in range(3) if i != depth_axis]
+        # Several depth sections avoid mistaking a shallow surface recess
+        # for a through-hole, while keeping computation bounded.
+        for depth in (0.25, 0.5, 0.75):
+            occupied = []
+            for row in range(grid):
+                line = []
+                for col in range(grid):
+                    p = [bbox[i] + spans[i] * 0.5 for i in range(3)]
+                    p[depth_axis] = bbox[depth_axis] + spans[depth_axis] * depth
+                    for axis, fraction in zip(plane_axes,
+                                              ((col + 0.5) / grid, (row + 0.5) / grid)):
+                        p[axis] = bbox[axis] + spans[axis] * fraction
+                    point = gp_Pnt(*p)
+                    inside = False
+                    for classifier in classifiers:
+                        classifier.Perform(point, 1e-6)
+                        if classifier.State() in (TopAbs_IN, TopAbs_ON):
+                            inside = True
+                            break
+                    line.append(inside)
+                occupied.append(line)
+            voids = set()
+            for y in range(1, grid - 1):
+                for x in range(1, grid - 1):
+                    if occupied[y][x]:
+                        continue
+                    if (any(occupied[y][:x]) and any(occupied[y][x + 1:])
+                            and any(occupied[k][x] for k in range(y))
+                            and any(occupied[k][x] for k in range(y + 1, grid))):
+                        voids.add((x, y))
+            if len(voids) < 3:
+                continue
+            components = []
+            while voids:
+                seed = voids.pop()
+                stack = [seed]
+                component = [seed]
+                while stack:
+                    x, y = stack.pop()
+                    for neighbor in ((x - 1, y), (x + 1, y),
+                                     (x, y - 1), (x, y + 1)):
+                        if neighbor in voids:
+                            voids.remove(neighbor)
+                            stack.append(neighbor)
+                            component.append(neighbor)
+                if len(component) >= 3:
+                    components.append(component)
+            if components:
+                sections.append({"axis": depth_axis, "depth": depth,
+                                 "void_regions": len(components),
+                                 "void_samples": sum(map(len, components))})
+    return {"status": "DETECTED" if sections else "NOT_DETECTED",
+            "sections": sections,
+            "max_regions": max((v["void_regions"] for v in sections), default=0),
+            "method": "axis_aligned_brep_occupancy_grid",
+            "grid": grid}
+
+
 def recognize_step(path: Path) -> dict:
     solids = read_step(path)
     metrics = geometry_metrics(solids)
@@ -91,8 +170,11 @@ def recognize_step(path: Path) -> dict:
     fill = volume / box_volume if box_volume > 0 else 0.0
     verdict = shape_verdict(volume=volume, dimensions=dimensions, fill=fill,
                             solid_count=len(solids))
+    pocket = cavity_profile(solids, metrics["bbox_mm"])
     return {
         "verdict": verdict,
+        "cavity_profile": pocket,
+        "expansion_structure_shape": pocket["status"] == "DETECTED",
         "volume_mm3": volume,
         "obb_dimensions_mm": dimensions,
         "bbox_mm": metrics["bbox_mm"],
