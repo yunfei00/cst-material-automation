@@ -174,7 +174,7 @@ def test_recognize_uses_brep_aabb_when_mesh_pca_extent_is_inflated(monkeypatch):
         "dimensions_mm": [100, 34, 5],
         "bbox_mm": [0, 0, 0, 100, 34, 5],
     })
-    monkeypatch.setattr(battery, "cavity_profile", lambda *_: {"status": "NOT_DETECTED"})
+    monkeypatch.setattr(battery, "edge_groove_profile", lambda *_: {"status": "DETECTED"})
     for estimated in ([100, 34, 5], [100, 41, 7]):
         monkeypatch.setattr(battery, "_oriented_dimensions",
                             lambda *_, with_normal=False, d=estimated:
@@ -193,3 +193,19 @@ def test_pair_uses_aabb_thickness_not_inflated_mesh_pca():
     second["aabb_dimensions_mm"] = [80, 40, 5]
     second["obb_dimensions_mm"] = [80, 41, 9]
     assert battery.compatible_pair(first, second)
+
+
+def test_edge_grooves_are_lower_shelves_not_center_trough():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+
+    # A raised central plateau and two lower edge shelves, running lengthwise.
+    base = BRepPrimAPI_MakeBox(100, 40, 4).Solid()
+    raised = BRepPrimAPI_MakeBox(
+        __import__("OCP.gp", fromlist=["gp_Pnt"]).gp_Pnt(0, 9, 4),
+        __import__("OCP.gp", fromlist=["gp_Pnt"]).gp_Pnt(100, 31, 5)).Solid()
+    cell = BRepAlgoAPI_Fuse(base, raised).Shape()
+    bbox = [0, 0, 0, 100, 40, 5]
+    assert battery.edge_groove_profile([cell], bbox)["status"] == "DETECTED"
+    assert battery.edge_groove_profile([BRepPrimAPI_MakeBox(100, 40, 5).Solid()],
+                                       bbox)["status"] == "NOT_DETECTED"
