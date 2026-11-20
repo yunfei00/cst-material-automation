@@ -48,7 +48,7 @@ def test_scan_cache_and_failure_preserved(tmp_path, monkeypatch):
     result = battery.scan(tmp_path, workers=1, progress=events.append)
     assert result["summary"]["matched"] == 1
     assert result["summary"]["failed"] == 1
-    report = json.loads((tmp_path / "battery_recognition.json").read_text())
+    report = json.loads((tmp_path / "battery_recognition.json").read_text(encoding="utf-8"))
     assert report["complete"]
     assert any(e["event"] == "match" for e in events)
     assert battery.complete_cached_report(tmp_path) is not None
