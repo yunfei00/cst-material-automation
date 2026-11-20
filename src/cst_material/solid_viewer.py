@@ -114,6 +114,7 @@ def launch_viewer(path: str | Path) -> int:
             self.screw_only = QCheckBox("螺丝")
             self.pin_only = QCheckBox("定位销")
             self.battery_only = QCheckBox("电池")
+            self.display_only = QCheckBox("屏幕")
             self.find_shields = QPushButton("筛选屏蔽罩候选")
             self.inspect_shield = QPushButton("精细检查当前屏蔽罩")
             self.refine_shields = QPushButton("二级精筛屏蔽罩候选")
@@ -129,7 +130,11 @@ def launch_viewer(path: str | Path) -> int:
                 search_actions.addWidget(button)
             left_layout.addLayout(search_actions)
             filters = QHBoxLayout()
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only, self.battery_only):
+            for checkbox in (
+                self.pcb_only, self.shield_only, self.spring_only,
+                self.screw_only, self.pin_only, self.battery_only,
+                self.display_only,
+            ):
                 filters.addWidget(checkbox)
             left_layout.addLayout(filters)
             workers_row = QHBoxLayout()
@@ -252,6 +257,7 @@ def launch_viewer(path: str | Path) -> int:
             self.screw_only.toggled.connect(self._toggle_screw_only)
             self.pin_only.toggled.connect(self._toggle_pin_only)
             self.battery_only.toggled.connect(self._toggle_battery_only)
+            self.display_only.toggled.connect(self._toggle_display_only)
             self.fastener_workers.valueChanged.connect(
                 lambda count: self.settings.setValue("fastener/workers", count))
 
@@ -494,7 +500,11 @@ def launch_viewer(path: str | Path) -> int:
             dialog.exec()
 
         def _exclusive_filter(self, active):
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only, self.battery_only):
+            for checkbox in (
+                self.pcb_only, self.shield_only, self.spring_only,
+                self.screw_only, self.pin_only, self.battery_only,
+                self.display_only,
+            ):
                 if checkbox is active:
                     continue
                 checkbox.blockSignals(True)
@@ -597,6 +607,176 @@ def launch_viewer(path: str | Path) -> int:
             if not process.waitForStarted(3000):
                 self.refine_process = None
                 self.search_summary.setText("电池识别进程启动失败")
+
+        @staticmethod
+        def _display_verdicts():
+            return {
+                "DISPLAY_CANDIDATE",
+                "PROBABLE_DISPLAY_MODULE",
+                "STRONG_DISPLAY_EVIDENCE",
+                "AMBIGUOUS_FRONT_BACK",
+            }
+
+        def _display_row(self, solid_id, record):
+            return {
+                "solid_id": solid_id,
+                "candidate_type": "DISPLAY_CANDIDATE",
+                "verdict": record.get("verdict", "DISPLAY_CANDIDATE"),
+                "reason": record.get("reason", "大面积外侧薄板候选"),
+                "evidence": record.get("evidence", []),
+                "assembly_id": record.get("assembly_id"),
+                "confidence": record.get("confidence"),
+            }
+
+        def _show_display_report(self, report):
+            priority = {
+                "STRONG_DISPLAY_EVIDENCE": 0,
+                "PROBABLE_DISPLAY_MODULE": 1,
+                "AMBIGUOUS_FRONT_BACK": 2,
+                "DISPLAY_CANDIDATE": 3,
+            }
+            rows = [
+                self._display_row(sid, rec)
+                for sid, rec in report["results"].items()
+                if rec.get("status") == "PASS"
+                and rec.get("verdict") in self._display_verdicts()
+                and sid in self.tree_items
+            ]
+            rows.sort(key=lambda row: (
+                priority.get(row["verdict"], 9),
+                row.get("assembly_id") or "",
+                row["solid_id"],
+            ))
+            if self.display_only.isChecked():
+                self.search_results = {row["solid_id"]: row for row in rows}
+                self._sort_tree_by_search_results(rows)
+                self._filter_tree(self.search.text())
+            layered_assemblies = {
+                item.get("assembly_id")
+                for item in report.get("assemblies", [])
+                if item.get("assembly_id") and item.get("layer_count", 0) >= 2
+            }
+            ambiguous = sum(
+                row["verdict"] == "AMBIGUOUS_FRONT_BACK" for row in rows
+            )
+            strong = sum(
+                row["verdict"] == "STRONG_DISPLAY_EVIDENCE" for row in rows
+            )
+            failed = report.get("summary", {}).get("failed", 0)
+            self.search_summary.setText(
+                f"屏幕总成候选：{len(rows)} 个 Solid，"
+                f"{len(layered_assemblies)} 个多层组；强证据 {strong} 个；"
+                f"前后歧义 {ambiguous} 个；失败 {failed} 个。"
+                "这是纯几何候选，不确认显示功能、前后方向或材料；"
+                "请逐项查看三维并在公司真实工程中复核。"
+            )
+
+        def _toggle_display_only(self, checked):
+            if checked:
+                self._exclusive_filter(self.display_only)
+                self._scan_display_geometry()
+            else:
+                if self.refine_process is not None:
+                    self.refine_process.kill()
+                    self.refine_process = None
+                self._clear_search_results()
+
+        def _scan_display_geometry(self):
+            if not self.root or self.refine_process is not None:
+                return
+            import json
+            import sys
+
+            from cst_material.display_recognition import (
+                VERSION,
+                complete_cached_report,
+            )
+
+            try:
+                cached = complete_cached_report(self.root)
+            except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+                cached = None
+            if cached is not None:
+                self._show_display_report(cached)
+                return
+
+            process = QProcess(self)
+            self.refine_process = process
+            self.search_results = {}
+            self._filter_tree(self.search.text())
+            self.search_summary.setText(
+                "屏幕识别：正在后台筛选大面积外侧薄板并分析层叠关系"
+            )
+            process.setWorkingDirectory(str(self.root))
+            process.setProgram(sys.executable)
+            process.setArguments([
+                "-m", "cst_material.display_recognition", str(self.root),
+            ])
+            process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            pending = bytearray()
+
+            def on_output():
+                pending.extend(bytes(process.readAllStandardOutput()))
+                while b"\n" in pending:
+                    raw, _, rest = pending.partition(b"\n")
+                    pending[:] = rest
+                    try:
+                        event = json.loads(raw.decode("utf-8", errors="replace"))
+                    except (ValueError, TypeError):
+                        continue
+                    if not isinstance(event, dict) or not self.display_only.isChecked():
+                        continue
+                    kind = event.get("event")
+                    if kind == "phase":
+                        self.search_summary.setText(
+                            event.get("message", "正在准备屏幕候选识别")
+                        )
+                    elif kind == "match":
+                        sid = event.get("solid_id")
+                        verdict = event.get("verdict")
+                        if (
+                            sid in self.tree_items
+                            and verdict in self._display_verdicts()
+                        ):
+                            self.search_results[sid] = self._display_row(sid, event)
+                            self._filter_tree(self.search.text())
+                    elif kind == "progress":
+                        self.search_summary.setText(
+                            f'屏幕识别 {event.get("done", 0)}/'
+                            f'{event.get("total", 0)}；'
+                            f'候选 {event.get("matched", event.get("candidates", 0))}；'
+                            f'失败 {event.get("failed", 0)}'
+                        )
+
+            def finished(code, _status):
+                if self.refine_process is not process:
+                    return
+                on_output()
+                self.refine_process = None
+                try:
+                    report = json.loads(
+                        (self.root / "display_recognition.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    if (
+                        code != 0
+                        or report.get("algorithm_version") != VERSION
+                        or not report.get("complete")
+                    ):
+                        raise ValueError("识别未正常完成或报告版本不匹配")
+                    self._show_display_report(report)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    self.search_summary.setText(
+                        f"屏幕识别失败：{exc}；当前实时候选仍可查看"
+                    )
+
+            process.readyReadStandardOutput.connect(on_output)
+            process.finished.connect(finished)
+            process.start()
+            if not process.waitForStarted(3000):
+                self.refine_process = None
+                self.search_summary.setText("屏幕识别进程启动失败")
 
         def _toggle_screw_only(self, checked):
             if checked:
@@ -1149,7 +1329,11 @@ def launch_viewer(path: str | Path) -> int:
                 )
 
         def _clear_search_results(self):
-            for checkbox in (self.pcb_only, self.shield_only, self.spring_only, self.screw_only, self.pin_only):
+            for checkbox in (
+                self.pcb_only, self.shield_only, self.spring_only,
+                self.screw_only, self.pin_only, self.battery_only,
+                self.display_only,
+            ):
                 checkbox.blockSignals(True)
                 checkbox.setChecked(False)
                 checkbox.blockSignals(False)
@@ -1242,6 +1426,18 @@ def launch_viewer(path: str | Path) -> int:
                             return visible
                         if row.get("candidate_type") == "BATTERY_SHAPE":
                             item.setText(1, "电池 · 已匹配")
+                            item.setHidden(not visible)
+                            return visible
+                        if row.get("candidate_type") == "DISPLAY_CANDIDATE":
+                            label = {
+                                "STRONG_DISPLAY_EVIDENCE": "强证据",
+                                "PROBABLE_DISPLAY_MODULE": "层叠总成候选",
+                                "AMBIGUOUS_FRONT_BACK": "前后盖歧义",
+                                "DISPLAY_CANDIDATE": "外侧薄板候选",
+                            }.get(row.get("verdict"), "待确认")
+                            assembly = row.get("assembly_id")
+                            suffix = f" · {assembly}" if assembly else ""
+                            item.setText(1, f"屏幕 · {label}{suffix}")
                             item.setHidden(not visible)
                             return visible
                         if row.get("candidate_type") == "PIN_CANDIDATE":
@@ -1342,6 +1538,22 @@ def launch_viewer(path: str | Path) -> int:
                     mesh_path = (None if (rec.get("verified_solid_mapping") or rec.get("direct_solid_export"))
                                  else ensure_preview_mesh(self.root, rec))
                     self._display_step(file_path, rec, mesh_path)
+                display_row = (self.search_results or {}).get(rec["solid_id"])
+                if (
+                    display_row
+                    and display_row.get("candidate_type") == "DISPLAY_CANDIDATE"
+                ):
+                    evidence = display_row.get("evidence") or []
+                    if not isinstance(evidence, list):
+                        evidence = [str(evidence)]
+                    details = [
+                        f"屏幕候选等级：{display_row.get('verdict', '未知')}",
+                        f"层叠组：{display_row.get('assembly_id') or '未成组'}",
+                        f"判定说明：{display_row.get('reason') or '无'}",
+                        *[str(item) for item in evidence],
+                        "纯几何不能确认显示功能、正反方向或材料，必须人工复核。",
+                    ]
+                    self.similar_results.setText(chr(10).join(details))
                 refined = self.refinement_results.get(rec['solid_id'])
                 if refined:
                     if refined.get('status') == 'PASS':

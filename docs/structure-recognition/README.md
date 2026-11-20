@@ -7,6 +7,8 @@
 | 结构类别 | 文档 | 状态 | 实现 |
 | --- | --- | --- | --- |
 | 带真实外螺纹的头杆式螺丝 | [螺丝识别算法](screw.md) | v29 冻结；当前验证通过 | `src/cst_material/phillips_screw_recognition.py` |
+| 手机电池形态 | [手机电池纯几何识别](battery.md) | v13 代码已实现；真实类别准确率待验证 | `src/cst_material/battery_recognition.py` |
+| 手机屏幕总成候选 | [手机屏幕总成几何识别](display.md) | 第一版；无真实数据，待公司实机验证 | `src/cst_material/display_recognition.py` |
 
 ## 后续新增规则
 

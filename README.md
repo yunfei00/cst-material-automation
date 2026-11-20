@@ -2,7 +2,7 @@
 
 ## 结构件识别算法文档
 
-所有结构件的几何识别原理、实现函数、误报漏报、测试与冻结版本统一维护在 [结构件识别算法目录](docs/structure-recognition/README.md)。当前已整理 [螺丝识别算法（v29）](docs/structure-recognition/screw.md)，后续每种结构件单独成文。
+所有结构件的几何识别原理、实现函数、误报漏报、测试与冻结版本统一维护在 [结构件识别算法目录](docs/structure-recognition/README.md)。当前已整理 [螺丝识别算法（v29）](docs/structure-recognition/screw.md)、[手机电池形态识别](docs/structure-recognition/battery.md)和[手机屏幕总成候选识别](docs/structure-recognition/display.md)。屏幕算法目前只有合成测试，2026-11-23 实机步骤见[手机屏幕识别验收手册](docs/display-recognition-verification.md)。
 
 ## 当前正确流程：逐 Solid 导出 STEP
 
