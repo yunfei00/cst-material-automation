@@ -350,6 +350,9 @@ def scan(folder, *, workers=1, progress=None):
         if sid not in selected:
             rec["verdict"] = "OTHER"
             rec["reason"] = "几何形态相符，但缺少与已识别电芯的可靠成组关系"
+    summary["expansion_structures"] = sum(
+        rec.get("status") == "PASS" and rec.get("expansion_structure_shape", False)
+        for rec in results.values())
     summary["matched"] = len(selected)
     summary["cell_configuration"] = ("dual" if len(selected) == 2 else
                                      "single" if selected else "unknown")
