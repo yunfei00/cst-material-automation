@@ -61,3 +61,12 @@ def test_cache_invalidated_by_source_signature(tmp_path, monkeypatch):
     }))
     monkeypatch.setattr(battery, "source_signature", lambda _: ("new", 0))
     assert battery.complete_cached_report(tmp_path) is None
+
+
+def test_oriented_dimensions_on_real_occt_box():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    shape = BRepPrimAPI_MakeBox(100.0, 50.0, 5.0).Solid()
+    dimensions = battery._oriented_dimensions([shape])
+    assert len(dimensions) == 3
+    assert dimensions[0] > dimensions[1] > dimensions[2]
+    assert all(value > 0 for value in dimensions)
