@@ -164,3 +164,32 @@ def test_cavity_profile_detects_recess_but_not_solid_box():
     assert plain["status"] == "NOT_DETECTED"
     assert pocket["status"] == "DETECTED"
     assert pocket["max_regions"] >= 1
+
+
+def test_recognize_uses_brep_aabb_when_mesh_pca_extent_is_inflated(monkeypatch):
+    # Same true geometry, different tessellation sampling must not change fill.
+    monkeypatch.setattr(battery, "read_step", lambda _: [object()])
+    monkeypatch.setattr(battery, "geometry_metrics", lambda _: {
+        "volume_mm3": 100 * 34 * 5 * 0.93,
+        "dimensions_mm": [100, 34, 5],
+        "bbox_mm": [0, 0, 0, 100, 34, 5],
+    })
+    monkeypatch.setattr(battery, "cavity_profile", lambda *_: {"status": "NOT_DETECTED"})
+    for estimated in ([100, 34, 5], [100, 41, 7]):
+        monkeypatch.setattr(battery, "_oriented_dimensions",
+                            lambda *_, with_normal=False, d=estimated:
+                            (d, [0, 0, 1]) if with_normal else d)
+        result = battery.recognize_step("unused.step")
+        assert result["verdict"] == "BATTERY_SHAPE"
+        assert abs(result["fill_ratio"] - 0.93) < 1e-9
+        assert result["fill_method"] == "brep_aabb"
+        assert result["aabb_dimensions_mm"] == [100, 34, 5]
+
+
+def test_pair_uses_aabb_thickness_not_inflated_mesh_pca():
+    first = _cell(0, 0)
+    second = _cell(0, 43)
+    first["aabb_dimensions_mm"] = [80, 40, 5]
+    second["aabb_dimensions_mm"] = [80, 40, 5]
+    second["obb_dimensions_mm"] = [80, 41, 9]
+    assert battery.compatible_pair(first, second)
