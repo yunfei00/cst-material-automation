@@ -403,8 +403,11 @@ def scan(folder, *, workers=1, progress=None):
         progress({"event": "phase", "message": f"正在顺序精查 {len(tasks)} 个 STEP",
                   "done": len(results), "total": limit})
     count = 1
-    for task in tasks:
+    for index, task in enumerate(tasks):
         accept(*_one(task))
+        if ((index + 1) % 10 == 0 and
+                sum(rec.get("verdict") == "BATTERY_SHAPE" for rec in results.values()) >= 2):
+            break
     matches = [(sid, rec) for sid, rec in results.items()
                if rec.get("status") == "PASS" and rec.get("verdict") == "BATTERY_SHAPE"]
     def geometry_key(item):
@@ -427,6 +430,7 @@ def scan(folder, *, workers=1, progress=None):
     summary["expansion_structures"] = sum(
         rec.get("status") == "PASS" and rec.get("expansion_structure_shape", False)
         for rec in results.values())
+    summary["candidates"] = len(results)
     summary["matched"] = len(selected)
     summary["cell_configuration"] = ("dual" if len(selected) == 2 else
                                      "single" if selected else "unknown")
